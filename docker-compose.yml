@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # Database Service (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    container_name: wms-postgres-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: WmsSecurePassword123!
+      POSTGRES_DB: linkstar_wms
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Full-Stack Application Service
+  wms-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: linkstar-wms-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:WmsSecurePassword123!@db:5432/linkstar_wms?schema=public
+      - JWT_SECRET=LinkstarWmsSecretToken2026Key!
+      - PORT=3000
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

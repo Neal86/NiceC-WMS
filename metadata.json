@@ -1,0 +1,6 @@
+{
+  "name": "NiceC WMS仓库管理系统",
+  "description": "高度复刻企业级NiceC WMS后台系统的一件代发出库管理Demo，支持精细化多Tab筛选、客户/SKU过滤、波次生成、面单打印管理、出库单完整CRUD以及JWT登录认证，包含完整Node.js Express + React全栈可运行代码及Docker/Prisma配置文件。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
