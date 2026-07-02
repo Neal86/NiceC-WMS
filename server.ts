@@ -21,6 +21,44 @@ function getCurrentUser(req: any) {
   }
 }
 
+// Authentication and Authorization Middlewares
+function requireAuth(req: any, res: any, next: any) {
+  const user = getCurrentUser(req);
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized. Please login first.' });
+  }
+  req.user = user;
+  next();
+}
+
+function requireRole(...allowedRoles: string[]) {
+  return (req: any, res: any, next: any) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized. Please login first.' });
+    }
+    const userRole = (req.user.role || '').toUpperCase();
+    const hasRole = allowedRoles.some(r => r.toUpperCase() === userRole);
+    if (!hasRole) {
+      return res.status(403).json({ error: `Forbidden. Role '${req.user.role}' does not have permission.` });
+    }
+    next();
+  };
+}
+
+function requireCustomerAccess(req: any, res: any, next: any) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized. Please login first.' });
+  }
+  const role = (req.user.role || '').toUpperCase();
+  if (role === 'CLIENT' || role === 'CUSTOMER') {
+    const targetCustomerId = req.params.customerId || req.params.id || req.query.customerId || req.body.customerId;
+    if (targetCustomerId && req.user.customerId && targetCustomerId !== req.user.customerId) {
+      return res.status(403).json({ error: "Forbidden. You do not have access to this customer's data." });
+    }
+  }
+  next();
+}
+
 // 1. Stock Reservation Helper on Order Creation
 async function reserveStock(orderId: string, customerId: string, skuId: string, qty: number, warehouseId: string) {
   const hasDb = await checkDbConnection();
@@ -78,7 +116,7 @@ async function reserveStock(orderId: string, customerId: string, skuId: string, 
     const inv = db.inventory.find(i => i.skuId === skuId);
     if (inv) {
       inv.availableQty = Math.max(0, inv.availableQty - qty);
-      inv.lockedQty = (inv.lockedQty || 0) + qty;
+      inv.reservedQty = (inv.reservedQty || 0) + qty;
     }
     saveDB();
   }
@@ -136,7 +174,7 @@ async function deductStock(orderId: string) {
     for (const item of items) {
       const inv = db.inventory.find(i => i.skuId === item.skuId);
       if (inv) {
-        inv.lockedQty = Math.max(0, (inv.lockedQty || 0) - item.qty);
+        inv.reservedQty = Math.max(0, (inv.reservedQty || 0) - item.qty);
       }
     }
     saveDB();
@@ -197,7 +235,7 @@ async function releaseStock(orderId: string) {
       const inv = db.inventory.find(i => i.skuId === item.skuId);
       if (inv) {
         inv.availableQty += item.qty;
-        inv.lockedQty = Math.max(0, (inv.lockedQty || 0) - item.qty);
+        inv.reservedQty = Math.max(0, (inv.reservedQty || 0) - item.qty);
       }
     }
     saveDB();
@@ -239,7 +277,7 @@ async function startServer() {
         
         if (dbUser && dbUser.status === 'ACTIVE') {
           // Compare passwords
-          const isMatch = bcrypt.compareSync(password, dbUser.password);
+          const isMatch = bcrypt.compareSync(password, dbUser.passwordHash);
           if (isMatch) {
             const token = jwt.sign(
               { 
@@ -322,8 +360,28 @@ async function startServer() {
   // ==========================================
   // Static Reference APIs
   // ==========================================
-  app.get('/api/customers', (req, res) => {
+  app.get('/api/customers', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          const customers = await prisma.customer.findMany({ where: { id: user.customerId } });
+          return res.json(customers);
+        }
+        const customers = await prisma.customer.findMany();
+        return res.json(customers);
+      } catch (err) {
+        console.error('Prisma customers fetch error:', err);
+      }
+    }
+
     const db = getDB();
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      const customers = db.customers.filter(c => c.id === user.customerId);
+      return res.json(customers);
+    }
     res.json(db.customers);
   });
 
@@ -357,9 +415,8 @@ async function startServer() {
   // ==========================================
   
   // GET /api/outbound-orders (List with filters, pagination, search)
-  app.get('/api/outbound-orders', (req, res) => {
-    const db = getDB();
-    
+  app.get('/api/outbound-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const {
       tab, // OrderStatus
       customerNameCode,
@@ -368,7 +425,6 @@ async function startServer() {
       logisticsChannel,
       carrier,
       productCategory,
-      destinationCountry,
       recipient,
       sku,
       outboundOrderNo,
@@ -382,13 +438,207 @@ async function startServer() {
       pageSize = '10'
     } = req.query;
 
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        // Construct filter object
+        const where: any = {};
+
+        // Role-based customer data isolation
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          where.customerId = user.customerId;
+        }
+
+        // Tab Filter
+        const activeTab = (tab as string || 'ALL').toUpperCase();
+        if (activeTab !== 'ALL') {
+          where.status = activeTab;
+        }
+
+        // String search filters
+        if (customerNameCode) {
+          where.customer = {
+            OR: [
+              { id: { contains: customerNameCode, mode: 'insensitive' } },
+              { name: { contains: customerNameCode, mode: 'insensitive' } },
+              { code: { contains: customerNameCode, mode: 'insensitive' } }
+            ]
+          };
+        }
+
+        if (orderType) {
+          where.orderType = orderType;
+        }
+
+        if (salesPlatform) {
+          where.salesPlatform = salesPlatform;
+        }
+
+        if (logisticsChannel) {
+          where.OR = [
+            { logisticsChannelId: logisticsChannel },
+            { logisticsChannel: { name: { contains: logisticsChannel as string, mode: 'insensitive' } } }
+          ];
+        }
+
+        if (carrier) {
+          where.OR = [
+            ...(where.OR || []),
+            { carrierId: carrier },
+            { carrier: { name: { contains: carrier as string, mode: 'insensitive' } } }
+          ];
+        }
+
+        if (recipient) {
+          where.recipient = { contains: recipient as string, mode: 'insensitive' };
+        }
+
+        if (outboundOrderNo) {
+          where.orderNo = { contains: outboundOrderNo as string, mode: 'insensitive' };
+        }
+
+        if (sku) {
+          where.items = {
+            some: {
+              OR: [
+                { skuCode: { contains: sku as string, mode: 'insensitive' } },
+                { productName: { contains: sku as string, mode: 'insensitive' } }
+              ]
+            }
+          };
+        }
+
+        if (productCategory) {
+          where.items = {
+            ...(where.items || {}),
+            some: {
+              ...(where.items?.some || {}),
+              category: productCategory
+            }
+          };
+        }
+
+        if (minQty || maxQty) {
+          where.totalQty = {};
+          if (minQty) where.totalQty.gte = parseInt(minQty as string, 10);
+          if (maxQty) where.totalQty.lte = parseInt(maxQty as string, 10);
+        }
+
+        if (createdTimeStart || createdTimeEnd) {
+          where.createdTime = {};
+          if (createdTimeStart) where.createdTime.gte = new Date(createdTimeStart as string);
+          if (createdTimeEnd) where.createdTime.lte = new Date(createdTimeEnd as string);
+        }
+
+        // Pagination
+        const pNum = parseInt(page as string, 10);
+        const pSize = parseInt(pageSize as string, 10);
+        const skip = (pNum - 1) * pSize;
+
+        // Sorting
+        const orderBy: any = {};
+        if (sortBy === 'createdTime') {
+          orderBy.createdTime = sortOrder;
+        } else if (sortBy === 'totalQty') {
+          orderBy.totalQty = sortOrder;
+        } else if (sortBy === 'totalWeight') {
+          orderBy.totalWeight = sortOrder;
+        } else {
+          orderBy[sortBy as string] = sortOrder;
+        }
+
+        const [ordersList, totalCount] = await Promise.all([
+          prisma.outboundOrder.findMany({
+            where,
+            include: {
+              items: true,
+              customer: true,
+              logisticsChannel: true,
+              carrier: true
+            },
+            orderBy,
+            skip,
+            take: pSize
+          }),
+          prisma.outboundOrder.count({ where })
+        ]);
+
+        // Dynamic tab count calculations (based on the user role-isolated orders, but NOT tab-filtered)
+        const countsWhere: any = {};
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          countsWhere.customerId = user.customerId;
+        }
+
+        const countsGroup = await prisma.outboundOrder.groupBy({
+          by: ['status'],
+          where: countsWhere,
+          _count: {
+            id: true
+          }
+        });
+
+        const counts: any = {
+          ALL: 0,
+          PENDING: 0,
+          PICKING: 0,
+          REVIEWS: 0,
+          SHIPPING: 0,
+          SHIPPED: 0,
+          EXCEPTIONS: 0,
+          CANCELLED: 0
+        };
+
+        let grandTotal = 0;
+        for (const item of countsGroup) {
+          const statusStr = item.status;
+          counts[statusStr] = item._count.id;
+          grandTotal += item._count.id;
+        }
+        counts.ALL = grandTotal;
+
+        const resolvedOrders = ordersList.map(ord => ({
+          ...ord,
+          customerName: ord.customer?.name || '',
+          customerCode: ord.customer?.code || '',
+          logisticsChannelName: ord.logisticsChannel?.name || '',
+          carrierName: ord.carrier?.name || '',
+          items: ord.items || []
+        }));
+
+        return res.json({
+          orders: resolvedOrders,
+          total: totalCount,
+          counts,
+          page: pNum,
+          pageSize: pSize
+        });
+
+      } catch (err: any) {
+        console.error('Prisma query error:', err);
+      }
+    }
+
+    // Fallback local JSON db
+    const db = getDB();
     let orders = [...db.outboundOrders];
 
     // Role-based customer data isolation
-    const user = getCurrentUser(req);
     if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
       orders = orders.filter(ord => ord.customerId === user.customerId);
     }
+
+    // Tab count computation (based on the isolated orders list)
+    const counts = {
+      ALL: orders.length,
+      PENDING: orders.filter(o => o.status === 'PENDING').length,
+      PICKING: orders.filter(o => o.status === 'PICKING').length,
+      REVIEWS: orders.filter(o => o.status === 'REVIEWS').length,
+      SHIPPING: orders.filter(o => o.status === 'SHIPPING').length,
+      SHIPPED: orders.filter(o => o.status === 'SHIPPED').length,
+      EXCEPTIONS: orders.filter(o => o.status === 'EXCEPTIONS').length,
+      CANCELLED: orders.filter(o => o.status === 'CANCELLED').length,
+    };
 
     // 1. Resolve customer & logistics details
     orders = orders.map(ord => {
@@ -487,7 +737,7 @@ async function startServer() {
       });
     }
 
-    // 4. Sorting
+    // Sorting
     orders.sort((a: any, b: any) => {
       let fieldA = a[sortBy as string];
       let fieldB = b[sortBy as string];
@@ -502,19 +752,6 @@ async function startServer() {
       return 0;
     });
 
-    // 5. Count tabs for standard counts
-    const counts = {
-      ALL: db.outboundOrders.length,
-      PENDING: db.outboundOrders.filter(o => o.status === 'PENDING').length,
-      PICKING: db.outboundOrders.filter(o => o.status === 'PICKING').length,
-      REVIEWS: db.outboundOrders.filter(o => o.status === 'REVIEWS').length,
-      SHIPPING: db.outboundOrders.filter(o => o.status === 'SHIPPING').length,
-      SHIPPED: db.outboundOrders.filter(o => o.status === 'SHIPPED').length,
-      EXCEPTIONS: db.outboundOrders.filter(o => o.status === 'EXCEPTIONS').length,
-      CANCELLED: db.outboundOrders.filter(o => o.status === 'CANCELLED').length,
-    };
-
-    // 6. Pagination
     const pNum = parseInt(page as string, 10);
     const pSize = parseInt(pageSize as string, 10);
     const total = orders.length;
@@ -531,12 +768,54 @@ async function startServer() {
   });
 
   // GET /api/outbound-orders/:id
-  app.get('/api/outbound-orders/:id', (req, res) => {
+  app.get('/api/outbound-orders/:id', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({
+          where: { id: req.params.id },
+          include: {
+            items: true,
+            customer: true,
+            logisticsChannel: true,
+            carrier: true
+          }
+        });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        
+        // Client access guard
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          if (order.customerId !== user.customerId) {
+            return res.status(403).json({ error: 'Forbidden. Access denied.' });
+          }
+        }
+
+        return res.json({
+          ...order,
+          customerName: order.customer?.name || '',
+          customerCode: order.customer?.code || '',
+          logisticsChannelName: order.logisticsChannel?.name || '',
+          carrierName: order.carrier?.name || '',
+          items: order.items || []
+        });
+      } catch (err) {
+        console.error('Prisma order fetch error:', err);
+      }
+    }
+
     const db = getDB();
     const order = db.outboundOrders.find(o => o.id === req.params.id);
-    
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Client access guard
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      if (order.customerId !== user.customerId) {
+        return res.status(403).json({ error: 'Forbidden. Access denied.' });
+      }
     }
 
     const cust = db.customers.find(c => c.id === order.customerId);
@@ -554,9 +833,8 @@ async function startServer() {
     });
   });
 
-  // POST /api/outbound-orders (Create)
-  app.post('/api/outbound-orders', async (req, res) => {
-    const db = getDB();
+  app.post('/api/outbound-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const {
       customerId,
       logisticsChannelId,
@@ -568,8 +846,6 @@ async function startServer() {
       items = []
     } = req.body;
 
-    // Role-based customer data isolation
-    const user = getCurrentUser(req);
     let resolvedCustomerId = customerId;
     if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
       resolvedCustomerId = user.customerId;
@@ -582,9 +858,177 @@ async function startServer() {
     // Generate outbound order code
     const orderNo = 'OBS' + String(Date.now()).substring(3, 15);
     const newOrderId = 'ord_' + Math.random().toString(36).substr(2, 9);
-
     const totalQty = items.reduce((sum: number, item: any) => sum + (item.qty || 1), 0);
-    const totalWeight = parseFloat((totalQty * (0.5 + Math.random() * 2)).toFixed(2));
+    const totalWeight = parseFloat((totalQty * 1.2).toFixed(2));
+
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const result = await prisma.$transaction(async (tx) => {
+          // 1. Pre-verify all SKU stock levels in transaction
+          for (const item of items) {
+            const inv = await tx.inventory.findFirst({
+              where: { skuId: item.skuId, warehouseId: 'wh_1' }
+            });
+            if (!inv || inv.availableQty < item.qty) {
+              const skuObj = await tx.sKU.findUnique({ where: { id: item.skuId } });
+              throw new Error(`库存不足，无法预留 SKU: ${skuObj ? skuObj.code : item.skuId} (可用: ${inv ? inv.availableQty : 0}, 需求: ${item.qty})`);
+            }
+          }
+
+          // 2. Create the Outbound Order
+          const order = await tx.outboundOrder.create({
+            data: {
+              id: newOrderId,
+              orderNo,
+              status: 'PENDING',
+              remark: remark || '-',
+              totalWeight,
+              totalQty,
+              customerId: resolvedCustomerId,
+              logisticsChannelId,
+              carrierId,
+              waveId: null,
+              labelPrinted: 'NOT_PRINTED',
+              recipient,
+              salesPlatform,
+              orderType,
+              createdTime: new Date()
+            }
+          });
+
+          // 3. Create items, update stock, and write logs
+          const createdItems = [];
+          for (const item of items) {
+            const skuObj = await tx.sKU.findUnique({ where: { id: item.skuId } });
+            const skuCode = skuObj ? skuObj.code : (item.skuCode || 'SKU-MOCK');
+            const skuBarcode = skuObj ? skuObj.barcode : (item.skuBarcode || skuCode || 'BARCODE-MOCK');
+            const productName = skuObj ? skuObj.name : (item.productName || 'Mock Product Name');
+
+            const newItem = await tx.outboundOrderItem.create({
+              data: {
+                id: 'item_' + Math.random().toString(36).substr(2, 9),
+                orderId: newOrderId,
+                skuId: item.skuId,
+                skuCode,
+                skuBarcode,
+                qty: item.qty,
+                productName,
+                category: item.category || '未分类'
+              }
+            });
+            createdItems.push(newItem);
+
+            // Update inventory values
+            const inv = await tx.inventory.findFirst({
+              where: { skuId: item.skuId, warehouseId: 'wh_1' }
+            });
+            if (inv) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  availableQty: inv.availableQty - item.qty,
+                  reservedQty: inv.reservedQty + item.qty
+                }
+              });
+
+              // Create reservation
+              await tx.inventoryReservation.create({
+                data: {
+                  customerId: resolvedCustomerId,
+                  orderId: newOrderId,
+                  orderItemId: newItem.id,
+                  skuId: item.skuId,
+                  skuCode,
+                  warehouseId: 'wh_1',
+                  quantity: item.qty,
+                  status: 'ACTIVE'
+                }
+              });
+
+              // Create transaction log
+              await tx.inventoryTransaction.create({
+                data: {
+                  customerId: resolvedCustomerId,
+                  warehouseId: 'wh_1',
+                  skuId: item.skuId,
+                  skuCode,
+                  type: 'RESERVE',
+                  direction: 'OUT',
+                  quantity: item.qty,
+                  beforeQty: inv.availableQty,
+                  afterQty: inv.availableQty - item.qty,
+                  reason: `Outbound Order ${newOrderId} Stock Reservation`
+                }
+              });
+            }
+          }
+
+          return { order, items: createdItems };
+        });
+
+        const fullOrder = await prisma.outboundOrder.findUnique({
+          where: { id: result.order.id },
+          include: {
+            customer: true,
+            logisticsChannel: true,
+            carrier: true
+          }
+        });
+
+        return res.status(201).json({
+          status: 'success',
+          order: {
+            ...result.order,
+            customerName: fullOrder?.customer?.name || '',
+            customerCode: fullOrder?.customer?.code || '',
+            logisticsChannelName: fullOrder?.logisticsChannel?.name || '',
+            carrierName: fullOrder?.carrier?.name || '',
+            items: result.items
+          }
+        });
+
+      } catch (err: any) {
+        console.error('Create outbound order transactional error:', err);
+        return res.status(400).json({ error: err.message || 'Create outbound order transaction failed.' });
+      }
+    }
+
+    // JSON fallback
+    const db = getDB();
+
+    // 1. Pre-verify SKU stock levels in JSON database
+    for (const item of items) {
+      const inv = db.inventory.find(i => i.skuId === item.skuId);
+      if (!inv || inv.availableQty < item.qty) {
+        const skuObj = db.skus.find(s => s.id === item.skuId);
+        return res.status(400).json({ error: `库存不足，无法预留 SKU: ${skuObj ? skuObj.code : item.skuId} (可用: ${inv ? inv.availableQty : 0}, 需求: ${item.qty})` });
+      }
+    }
+
+    // 2. Perform reservations safely
+    const newItems: OutboundOrderItem[] = items.map((item: any) => {
+      const skuObj = db.skus.find(s => s.id === item.skuId);
+      return {
+        id: 'item_' + Math.random().toString(36).substr(2, 9),
+        orderId: newOrderId,
+        skuId: item.skuId,
+        skuCode: skuObj ? skuObj.code : (item.skuCode || 'SKU-MOCK'),
+        skuBarcode: skuObj ? skuObj.barcode : (item.skuBarcode || item.skuCode || 'BARCODE-MOCK'),
+        qty: item.qty || 1,
+        productName: skuObj ? skuObj.name : (item.productName || 'Mock Product Name'),
+        category: item.category || '未分类'
+      };
+    });
+
+    for (const item of newItems) {
+      const inv = db.inventory.find(i => i.skuId === item.skuId);
+      if (inv) {
+        inv.availableQty = Math.max(0, inv.availableQty - item.qty);
+        inv.reservedQty = (inv.reservedQty || 0) + item.qty;
+      }
+    }
 
     const newOrder: OutboundOrder = {
       id: newOrderId,
@@ -604,73 +1048,266 @@ async function startServer() {
       orderType
     };
 
-    const newItems: OutboundOrderItem[] = items.map((item: any) => ({
-      id: 'item_' + Math.random().toString(36).substr(2, 9),
-      orderId: newOrderId,
-      skuId: item.skuId || 'sku_' + Math.random().toString(36).substr(2, 9),
-      skuCode: item.skuCode || 'SKU-MOCK',
-      skuBarcode: item.skuBarcode || item.skuCode || 'BARCODE-MOCK',
-      qty: item.qty || 1,
-      productName: item.productName || 'Mock Product Name',
-      category: item.category || '未分类'
-    }));
-
-    // Trigger stock reservation for items
-    for (const item of newItems) {
-      await reserveStock(newOrderId, resolvedCustomerId, item.skuId, item.qty, 'wh_1');
-    }
-
     db.outboundOrders.push(newOrder);
     db.outboundOrderItems.push(...newItems);
     saveDB();
+
+    const cust = db.customers.find(c => c.id === resolvedCustomerId);
+    const chan = db.logisticsChannels.find(l => l.id === logisticsChannelId);
+    const carr = db.carriers.find(c => c.id === carrierId);
 
     res.status(201).json({
       status: 'success',
       order: {
         ...newOrder,
+        customerName: cust ? cust.name : '',
+        customerCode: cust ? cust.code : '',
+        logisticsChannelName: chan ? chan.name : '',
+        carrierName: carr ? carr.name : '',
         items: newItems
       }
     });
   });
 
-  // PUT /api/outbound-orders/:id (Update)
-  app.put('/api/outbound-orders/:id', async (req, res) => {
+  app.put('/api/outbound-orders/:id', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    const updateData = req.body;
+
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({
+          where: { id: req.params.id },
+          include: { items: true }
+        });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+
+        // Client access guard
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          if (order.customerId !== user.customerId) {
+            return res.status(403).json({ error: 'Forbidden. Access denied.' });
+          }
+        }
+
+        // Prepare fields for update
+        const dataToUpdate: any = {};
+        if (updateData.status) dataToUpdate.status = updateData.status;
+        if (updateData.remark) dataToUpdate.remark = updateData.remark;
+        if (updateData.recipient) dataToUpdate.recipient = updateData.recipient;
+        if (updateData.salesPlatform) dataToUpdate.salesPlatform = updateData.salesPlatform;
+        if (updateData.orderType) dataToUpdate.orderType = updateData.orderType;
+        if (updateData.logisticsChannelId) dataToUpdate.logisticsChannelId = updateData.logisticsChannelId;
+        if (updateData.carrierId) dataToUpdate.carrierId = updateData.carrierId;
+
+        const updated = await prisma.$transaction(async (tx) => {
+          // If items are modified, recreate them
+          if (updateData.items && Array.isArray(updateData.items)) {
+            // Restore previous inventory quantities before removing items
+            const oldReservations = await tx.inventoryReservation.findMany({
+              where: { orderId: order.id, status: 'ACTIVE' }
+            });
+            for (const resv of oldReservations) {
+              const inv = await tx.inventory.findFirst({
+                where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+              });
+              if (inv) {
+                await tx.inventory.update({
+                  where: { id: inv.id },
+                  data: {
+                    availableQty: inv.availableQty + resv.quantity,
+                    reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+                  }
+                });
+              }
+            }
+            await tx.inventoryReservation.deleteMany({ where: { orderId: order.id } });
+            await tx.outboundOrderItem.deleteMany({ where: { orderId: order.id } });
+            
+            // Re-create items and perform fresh stock reservations
+            for (const item of updateData.items) {
+              const skuObj = await tx.sKU.findUnique({ where: { id: item.skuId } });
+              const skuCode = skuObj ? skuObj.code : (item.skuCode || 'SKU-MOCK');
+              const skuBarcode = skuObj ? skuObj.barcode : (item.skuBarcode || skuCode || 'BARCODE-MOCK');
+              const productName = skuObj ? skuObj.name : (item.productName || 'Mock Product Name');
+
+              // Check stock level first
+              const inv = await tx.inventory.findFirst({
+                where: { skuId: item.skuId, warehouseId: 'wh_1' }
+              });
+              if (!inv || inv.availableQty < item.qty) {
+                throw new Error(`库存不足，无法预留 SKU: ${skuCode} (可用: ${inv ? inv.availableQty : 0}, 需求: ${item.qty})`);
+              }
+
+              const newItem = await tx.outboundOrderItem.create({
+                data: {
+                  id: item.id || 'item_' + Math.random().toString(36).substr(2, 9),
+                  orderId: order.id,
+                  skuId: item.skuId,
+                  skuCode,
+                  skuBarcode,
+                  qty: item.qty || 1,
+                  productName,
+                  category: item.category || '未分类'
+                }
+              });
+
+              // Apply fresh reservation values
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  availableQty: inv.availableQty - item.qty,
+                  reservedQty: inv.reservedQty + item.qty
+                }
+              });
+
+              await tx.inventoryReservation.create({
+                data: {
+                  customerId: order.customerId,
+                  orderId: order.id,
+                  orderItemId: newItem.id,
+                  skuId: item.skuId,
+                  skuCode,
+                  warehouseId: 'wh_1',
+                  quantity: item.qty,
+                  status: 'ACTIVE'
+                }
+              });
+            }
+
+            dataToUpdate.totalQty = updateData.items.reduce((sum: number, i: any) => sum + i.qty, 0);
+            dataToUpdate.totalWeight = parseFloat((dataToUpdate.totalQty * 1.2).toFixed(2));
+          }
+
+          const resOrder = await tx.outboundOrder.update({
+            where: { id: order.id },
+            data: dataToUpdate,
+            include: { items: true }
+          });
+
+          // Stock deduction when status changes to SHIPPED
+          if (dataToUpdate.status === 'SHIPPED' && order.status !== 'SHIPPED') {
+            const reservations = await tx.inventoryReservation.findMany({
+              where: { orderId: order.id, status: 'ACTIVE' }
+            });
+            for (const resv of reservations) {
+              const inv = await tx.inventory.findFirst({
+                where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+              });
+              if (inv) {
+                await tx.inventory.update({
+                  where: { id: inv.id },
+                  data: {
+                    reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+                  }
+                });
+              }
+              await tx.inventoryReservation.update({
+                where: { id: resv.id },
+                data: { status: 'CONSUMED' }
+              });
+              
+              await tx.inventoryTransaction.create({
+                data: {
+                  customerId: resv.customerId,
+                  warehouseId: resv.warehouseId,
+                  skuId: resv.skuId,
+                  skuCode: resv.skuCode,
+                  type: 'SHIP',
+                  direction: 'OUT',
+                  quantity: resv.quantity,
+                  beforeQty: inv ? inv.availableQty + inv.reservedQty : 0,
+                  afterQty: inv ? inv.availableQty + inv.reservedQty - resv.quantity : 0,
+                  reason: `Outbound Order ${order.id} Shipped via Status Update`
+                }
+              });
+            }
+          }
+
+          return resOrder;
+        });
+
+        return res.json({
+          status: 'success',
+          order: updated
+        });
+      } catch (err: any) {
+        console.error('Prisma update order failed:', err);
+        return res.status(400).json({ error: err.message || 'Update failed.' });
+      }
+    }
+
+    // JSON fallback
     const db = getDB();
     const index = db.outboundOrders.findIndex(o => o.id === req.params.id);
-
     if (index === -1) {
       return res.status(404).json({ error: 'Order not found' });
     }
 
     const currentOrder = db.outboundOrders[index];
-    const updateData = req.body;
+    // Client access guard
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      if (currentOrder.customerId !== user.customerId) {
+        return res.status(403).json({ error: 'Forbidden. Access denied.' });
+      }
+    }
 
-    // Preserve core values if not supplied
     const updatedOrder: OutboundOrder = {
       ...currentOrder,
       ...updateData,
-      id: currentOrder.id, // forbid changing id
-      orderNo: currentOrder.orderNo // forbid changing order number
+      id: currentOrder.id,
+      orderNo: currentOrder.orderNo
     };
 
-    // If items are updated
     if (updateData.items && Array.isArray(updateData.items)) {
-      // Remove old items
+      // Restore previous quantities for existing items in JSON database
+      const oldItems = db.outboundOrderItems.filter(item => item.orderId === currentOrder.id);
+      for (const oldItem of oldItems) {
+        const inv = db.inventory.find(i => i.skuId === oldItem.skuId);
+        if (inv) {
+          inv.availableQty += oldItem.qty;
+          inv.reservedQty = Math.max(0, (inv.reservedQty || 0) - oldItem.qty);
+        }
+      }
+
+      // Check stock before re-reserving
+      for (const item of updateData.items) {
+        const inv = db.inventory.find(i => i.skuId === item.skuId);
+        if (!inv || inv.availableQty < item.qty) {
+          // Re-apply previous reservation levels on failure
+          for (const oldItem of oldItems) {
+            const oldInv = db.inventory.find(i => i.skuId === oldItem.skuId);
+            if (oldInv) {
+              oldInv.availableQty = Math.max(0, oldInv.availableQty - oldItem.qty);
+              oldInv.reservedQty = (oldInv.reservedQty || 0) + oldItem.qty;
+            }
+          }
+          return res.status(400).json({ error: `库存不足，无法预留 SKU: ${item.skuCode} (可用: ${inv ? inv.availableQty : 0}, 需求: ${item.qty})` });
+        }
+      }
+
+      // Deduct items and create fresh entries
       db.outboundOrderItems = db.outboundOrderItems.filter(item => item.orderId !== currentOrder.id);
-      
-      // Save new items
       const newItems: OutboundOrderItem[] = updateData.items.map((item: any) => ({
         id: item.id || 'item_' + Math.random().toString(36).substr(2, 9),
         orderId: currentOrder.id,
-        skuId: item.skuId || 'sku_' + Math.random().toString(36).substr(2, 9),
+        skuId: item.skuId,
         skuCode: item.skuCode,
         skuBarcode: item.skuBarcode || item.skuCode,
         qty: item.qty || 1,
         productName: item.productName,
         category: item.category || '未分类'
       }));
+
+      for (const item of newItems) {
+        const inv = db.inventory.find(i => i.skuId === item.skuId);
+        if (inv) {
+          inv.availableQty = Math.max(0, inv.availableQty - item.qty);
+          inv.reservedQty = (inv.reservedQty || 0) + item.qty;
+        }
+      }
+
       db.outboundOrderItems.push(...newItems);
-      
       updatedOrder.totalQty = newItems.reduce((sum, item) => sum + item.qty, 0);
       updatedOrder.totalWeight = parseFloat((updatedOrder.totalQty * 1.2).toFixed(2));
     }
@@ -759,25 +1396,109 @@ async function startServer() {
   });
 
   // POST /api/outbound-orders/:id/cancel
-  app.post('/api/outbound-orders/:id/cancel', async (req, res) => {
+  app.post('/api/outbound-orders/:id/cancel', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({
+          where: { id: req.params.id },
+          include: { items: true }
+        });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          if (order.customerId !== user.customerId) {
+            return res.status(403).json({ error: 'Forbidden. Access denied.' });
+          }
+        }
+
+        if (order.status === 'SHIPPED') {
+          return res.status(400).json({ error: '已出库订单无法取消' });
+        }
+
+        const updated = await prisma.$transaction(async (tx) => {
+          // Release stock reservations
+          const reservations = await tx.inventoryReservation.findMany({
+            where: { orderId: order.id, status: 'ACTIVE' }
+          });
+          for (const resv of reservations) {
+            const inv = await tx.inventory.findFirst({
+              where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+            });
+            if (inv) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  availableQty: inv.availableQty + resv.quantity,
+                  reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+                }
+              });
+            }
+            await tx.inventoryReservation.update({
+              where: { id: resv.id },
+              data: { status: 'RELEASED', releasedAt: new Date() }
+            });
+            
+            await tx.inventoryTransaction.create({
+              data: {
+                customerId: resv.customerId,
+                warehouseId: resv.warehouseId,
+                skuId: resv.skuId,
+                skuCode: resv.skuCode,
+                type: 'RELEASE',
+                direction: 'IN',
+                quantity: resv.quantity,
+                beforeQty: inv ? inv.availableQty : 0,
+                afterQty: inv ? inv.availableQty + resv.quantity : 0,
+                reason: `Outbound Order ${order.id} Cancelled`
+              }
+            });
+          }
+
+          return await tx.outboundOrder.update({
+            where: { id: order.id },
+            data: { status: 'CANCELLED' }
+          });
+        });
+
+        return res.json({
+          status: 'success',
+          message: '订单取消成功',
+          order: updated
+        });
+      } catch (err: any) {
+        console.error('Cancel order error:', err);
+        return res.status(400).json({ error: err.message || 'Cancel failed.' });
+      }
+    }
+
+    // JSON fallback
     const db = getDB();
     const ord = db.outboundOrders.find(o => o.id === req.params.id);
     if (!ord) return res.status(404).json({ error: 'Order not found' });
     
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      if (ord.customerId !== user.customerId) {
+        return res.status(403).json({ error: 'Forbidden. Access denied.' });
+      }
+    }
+
     if (ord.status === 'SHIPPED') {
       return res.status(400).json({ error: '已出库订单无法取消' });
     }
     
     // Release inventory reservation
     await releaseStock(ord.id);
-    
     ord.status = 'CANCELLED';
     
     // Log
     db.operationLogs.push({
       id: 'log_' + Math.random().toString(36).substr(2, 9),
-      userId: 'usr_1',
-      username: 'neal@nicec.net',
+      userId: user.id,
+      username: user.username,
       module: '出库管理',
       action: '取消订单',
       targetId: ord.id,
@@ -787,6 +1508,120 @@ async function startServer() {
     
     saveDB();
     res.json({ status: 'success', message: '订单取消成功', order: ord });
+  });
+
+  // POST /api/outbound-orders/:id/ship (Outbound Shipment Confirmation)
+  app.post('/api/outbound-orders/:id/ship', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({
+          where: { id: req.params.id },
+          include: { items: true }
+        });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          if (order.customerId !== user.customerId) {
+            return res.status(403).json({ error: 'Forbidden. Access denied.' });
+          }
+        }
+
+        if (order.status === 'SHIPPED') {
+          return res.status(400).json({ error: '订单已是出库状态' });
+        }
+
+        const updated = await prisma.$transaction(async (tx) => {
+          // Deduct stock (consume reservations)
+          const reservations = await tx.inventoryReservation.findMany({
+            where: { orderId: order.id, status: 'ACTIVE' }
+          });
+          for (const resv of reservations) {
+            const inv = await tx.inventory.findFirst({
+              where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+            });
+            if (inv) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+                }
+              });
+            }
+            await tx.inventoryReservation.update({
+              where: { id: resv.id },
+              data: { status: 'CONSUMED' }
+            });
+            
+            await tx.inventoryTransaction.create({
+              data: {
+                customerId: resv.customerId,
+                warehouseId: resv.warehouseId,
+                skuId: resv.skuId,
+                skuCode: resv.skuCode,
+                type: 'SHIP',
+                direction: 'OUT',
+                quantity: resv.quantity,
+                beforeQty: inv ? inv.availableQty + inv.reservedQty : 0,
+                afterQty: inv ? inv.availableQty + inv.reservedQty - resv.quantity : 0,
+                reason: `Outbound Order ${order.id} Shipped`
+              }
+            });
+          }
+
+          return await tx.outboundOrder.update({
+            where: { id: order.id },
+            data: { status: 'SHIPPED' }
+          });
+        });
+
+        return res.json({
+          status: 'success',
+          message: '出库确认成功，库存已扣减',
+          order: updated
+        });
+      } catch (err: any) {
+        console.error('Ship order error:', err);
+        return res.status(400).json({ error: err.message || 'Ship failed.' });
+      }
+    }
+
+    // JSON fallback
+    const db = getDB();
+    const ord = db.outboundOrders.find(o => o.id === req.params.id);
+    if (!ord) return res.status(404).json({ error: 'Order not found' });
+
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      if (ord.customerId !== user.customerId) {
+        return res.status(403).json({ error: 'Forbidden. Access denied.' });
+      }
+    }
+
+    if (ord.status === 'SHIPPED') {
+      return res.status(400).json({ error: '订单已是出库状态' });
+    }
+
+    // Deduct stock in JSON database
+    await deductStock(ord.id);
+    ord.status = 'SHIPPED';
+
+    // Log
+    db.operationLogs.push({
+      id: 'log_' + Math.random().toString(36).substr(2, 9),
+      userId: user.id,
+      username: user.username,
+      module: '出库管理',
+      action: '确认出库',
+      targetId: ord.id,
+      detail: `出库扣减库存: ${ord.orderNo}`,
+      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19)
+    });
+
+    saveDB();
+    res.json({ status: 'success', message: '出库确认成功，库存已扣减', order: ord });
   });
 
   // POST /api/outbound-orders/:id/print-label
@@ -878,7 +1713,19 @@ async function startServer() {
   // ==========================================
   // Customers API (CRUD)
   // ==========================================
-  app.get('/api/customers/:id', (req, res) => {
+  app.get('/api/customers/:id', requireAuth, requireCustomerAccess, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const cust = await prisma.customer.findUnique({ where: { id: req.params.id } });
+        if (!cust) return res.status(404).json({ error: 'Customer not found' });
+        return res.json(cust);
+      } catch (err) {
+        console.error('Prisma customer fetch error:', err);
+      }
+    }
+
     const db = getDB();
     const cust = db.customers.find(c => c.id === req.params.id);
     if (!cust) return res.status(404).json({ error: 'Customer not found' });
@@ -955,20 +1802,59 @@ async function startServer() {
   // ==========================================
   // SKUs API (CRUD)
   // ==========================================
-  app.get('/api/skus', (req, res) => {
+  app.get('/api/skus', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        let skus = [];
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          skus = await prisma.sKU.findMany({ where: { customerId: user.customerId } });
+        } else {
+          skus = await prisma.sKU.findMany();
+        }
+        return res.json(skus);
+      } catch (err) {
+        console.error('Prisma SKU fetch list error:', err);
+      }
+    }
+
     const db = getDB();
     let skus = db.skus;
-    const user = getCurrentUser(req);
     if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
       skus = skus.filter(s => s.customerId === user.customerId);
     }
     res.json(skus);
   });
 
-  app.get('/api/skus/:id', (req, res) => {
+  app.get('/api/skus/:id', requireAuth, requireCustomerAccess, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const sku = await prisma.sKU.findUnique({ where: { id: req.params.id } });
+        if (!sku) return res.status(404).json({ error: 'SKU not found' });
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          if (sku.customerId !== user.customerId) {
+            return res.status(403).json({ error: 'Forbidden. Access denied.' });
+          }
+        }
+        return res.json(sku);
+      } catch (err) {
+        console.error('Prisma SKU fetch error:', err);
+      }
+    }
+
     const db = getDB();
     const sku = db.skus.find(s => s.id === req.params.id);
     if (!sku) return res.status(404).json({ error: 'SKU not found' });
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      if (sku.customerId !== user.customerId) {
+        return res.status(403).json({ error: 'Forbidden. Access denied.' });
+      }
+    }
     res.json(sku);
   });
 
@@ -1097,10 +1983,26 @@ async function startServer() {
   // ==========================================
   // Inventory API
   // ==========================================
-  app.get('/api/inventory', (req, res) => {
+  app.get('/api/inventory', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        let inventory = [];
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          inventory = await prisma.inventory.findMany({ where: { customerId: user.customerId } });
+        } else {
+          inventory = await prisma.inventory.findMany();
+        }
+        return res.json(inventory);
+      } catch (err) {
+        console.error('Prisma inventory list fetch error:', err);
+      }
+    }
+
     const db = getDB();
     let inventory = db.inventory;
-    const user = getCurrentUser(req);
     if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
       inventory = inventory.filter((inv: any) => inv.customerId === user.customerId);
     }

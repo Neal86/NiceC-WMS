@@ -37,7 +37,7 @@ model User {
   id          String     @id @default(uuid())
   username    String     @unique
   email       String     @unique
-  password    String     // Hash value
+  passwordHash String     // Hash value
   role        Role       @default(WAREHOUSE_OPERATOR)
   avatar      String?
   customerId  String?

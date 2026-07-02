@@ -13,9 +13,9 @@ interface SKUStock {
   client: string;
   totalQty: number;
   availableQty: number;
-  lockedQty: number;
+  reservedQty: number;
   inTransitQty: number;
-  defectiveQty: number;
+  damagedQty: number;
   relabellingQty: number;
   dimensions: string;
   weight: string;
@@ -34,9 +34,9 @@ const INITIAL_STOCKS: SKUStock[] = [
     client: '之道 - 悠悠(1108026)',
     totalQty: 9107,
     availableQty: 9107,
-    lockedQty: 0,
+    reservedQty: 0,
     inTransitQty: 1200,
-    defectiveQty: 0,
+    damagedQty: 0,
     relabellingQty: 0,
     dimensions: '120.0 * 60.0 * 75.0 cm',
     weight: '18.50 kg',
@@ -53,9 +53,9 @@ const INITIAL_STOCKS: SKUStock[] = [
     client: '泉州之道 - Rocket-一件代发 (1108028)',
     totalQty: 12450,
     availableQty: 12300,
-    lockedQty: 150,
+    reservedQty: 150,
     inTransitQty: 5000,
-    defectiveQty: 5,
+    damagedQty: 5,
     relabellingQty: 0,
     dimensions: '30.0 * 30.0 * 65.0 cm',
     weight: '5.20 kg',
@@ -72,9 +72,9 @@ const INITIAL_STOCKS: SKUStock[] = [
     client: 'YANGZHOU(1108014)',
     totalQty: 5412,
     availableQty: 5320,
-    lockedQty: 92,
+    reservedQty: 92,
     inTransitQty: 800,
-    defectiveQty: 0,
+    damagedQty: 0,
     relabellingQty: 20,
     dimensions: '65.0 * 65.0 * 120.0 cm',
     weight: '14.80 kg',
@@ -91,9 +91,9 @@ const INITIAL_STOCKS: SKUStock[] = [
     client: '之道 - 悠悠(1108026)',
     totalQty: 3200,
     availableQty: 3200,
-    lockedQty: 0,
+    reservedQty: 0,
     inTransitQty: 1500,
-    defectiveQty: 0,
+    damagedQty: 0,
     relabellingQty: 0,
     dimensions: '85.0 * 80.0 * 80.0 cm',
     weight: '22.00 kg',
@@ -110,9 +110,9 @@ const INITIAL_STOCKS: SKUStock[] = [
     client: 'JIDONG(1108034)',
     totalQty: 110,
     availableQty: 110,
-    lockedQty: 0,
+    reservedQty: 0,
     inTransitQty: 10,
-    defectiveQty: 2,
+    damagedQty: 2,
     relabellingQty: 0,
     dimensions: '18.0 * 10.0 * 8.0 cm',
     weight: '0.35 kg',
@@ -129,9 +129,9 @@ const INITIAL_STOCKS: SKUStock[] = [
     client: '天旭01(1108013)',
     totalQty: 480,
     availableQty: 480,
-    lockedQty: 0,
+    reservedQty: 0,
     inTransitQty: 200,
-    defectiveQty: 0,
+    damagedQty: 0,
     relabellingQty: 0,
     dimensions: '22.0 * 22.0 * 35.0 cm',
     weight: '1.20 kg',
@@ -157,8 +157,8 @@ export default function InventoryManager() {
   const [adjustingStock, setAdjustingStock] = useState<SKUStock | null>(null);
   const [adjustForm, setAdjustForm] = useState({
     availableQty: 0,
-    lockedQty: 0,
-    defectiveQty: 0,
+    reservedQty: 0,
+    damagedQty: 0,
     location: '',
     zone: 'A区'
   });
@@ -177,7 +177,7 @@ export default function InventoryManager() {
     
     // 2. Property Filter
     if (propertyFilter === '正品' && item.availableQty <= 0) return false;
-    if (propertyFilter === '次品' && item.defectiveQty <= 0) return false;
+    if (propertyFilter === '次品' && item.damagedQty <= 0) return false;
     if (propertyFilter === '换标中' && item.relabellingQty <= 0) return false;
 
     // 3. Barcode Search
@@ -197,9 +197,9 @@ export default function InventoryManager() {
   // Calculate totals for summary cards (based on current filtered view or total)
   const totalInStock = stocks.reduce((acc, curr) => acc + curr.totalQty, 0);
   const totalAvailable = stocks.reduce((acc, curr) => acc + curr.availableQty, 0);
-  const totalLocked = stocks.reduce((acc, curr) => acc + curr.lockedQty, 0);
+  const totalLocked = stocks.reduce((acc, curr) => acc + curr.reservedQty, 0);
   const totalInTransit = stocks.reduce((acc, curr) => acc + curr.inTransitQty, 0);
-  const totalDefective = stocks.reduce((acc, curr) => acc + curr.defectiveQty, 0);
+  const totalDefective = stocks.reduce((acc, curr) => acc + curr.damagedQty, 0);
 
   // Selection handlers
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -220,8 +220,8 @@ export default function InventoryManager() {
     setAdjustingStock(stock);
     setAdjustForm({
       availableQty: stock.availableQty,
-      lockedQty: stock.lockedQty,
-      defectiveQty: stock.defectiveQty,
+      reservedQty: stock.reservedQty,
+      damagedQty: stock.damagedQty,
       location: stock.location,
       zone: stock.zone
     });
@@ -233,13 +233,13 @@ export default function InventoryManager() {
 
     setStocks(prev => prev.map(s => {
       if (s.id === adjustingStock.id) {
-        const total = adjustForm.availableQty + adjustForm.lockedQty + adjustForm.defectiveQty;
+        const total = adjustForm.availableQty + adjustForm.reservedQty + adjustForm.damagedQty;
         showToast(`SKU ${s.skuCode} 库存手工盘点微调成功！`, 'success');
         return {
           ...s,
           availableQty: adjustForm.availableQty,
-          lockedQty: adjustForm.lockedQty,
-          defectiveQty: adjustForm.defectiveQty,
+          reservedQty: adjustForm.reservedQty,
+          damagedQty: adjustForm.damagedQty,
           location: adjustForm.location,
           zone: adjustForm.zone,
           totalQty: total,
@@ -533,9 +533,9 @@ export default function InventoryManager() {
                         
                         <td className="px-2 border-r border-slate-100 text-right font-mono font-bold text-slate-700">{stock.totalQty.toLocaleString()}</td>
                         <td className="px-2 border-r border-slate-100 text-right font-mono font-extrabold text-emerald-600">{stock.availableQty.toLocaleString()}</td>
-                        <td className="px-2 border-r border-slate-100 text-right font-mono font-semibold text-amber-600">{stock.lockedQty.toLocaleString()}</td>
+                        <td className="px-2 border-r border-slate-100 text-right font-mono font-semibold text-amber-600">{stock.reservedQty.toLocaleString()}</td>
                         <td className="px-2 border-r border-slate-100 text-right font-mono text-blue-600">{stock.inTransitQty.toLocaleString()}</td>
-                        <td className="px-2 border-r border-slate-100 text-right font-mono text-red-500">{stock.defectiveQty.toLocaleString()}</td>
+                        <td className="px-2 border-r border-slate-100 text-right font-mono text-red-500">{stock.damagedQty.toLocaleString()}</td>
                         <td className="px-2 border-r border-slate-100 text-right font-mono text-indigo-500">{stock.relabellingQty.toLocaleString()}</td>
                         
                         <td className="px-2 border-r border-slate-100">
@@ -614,8 +614,8 @@ export default function InventoryManager() {
                   type="number"
                   min={0}
                   required
-                  value={adjustForm.lockedQty}
-                  onChange={(e) => setAdjustForm(prev => ({ ...prev, lockedQty: Number(e.target.value) || 0 }))}
+                  value={adjustForm.reservedQty}
+                  onChange={(e) => setAdjustForm(prev => ({ ...prev, reservedQty: Number(e.target.value) || 0 }))}
                   className="w-full h-8 px-2.5 rounded border border-slate-300 focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono"
                 />
               </div>
@@ -626,8 +626,8 @@ export default function InventoryManager() {
                   type="number"
                   min={0}
                   required
-                  value={adjustForm.defectiveQty}
-                  onChange={(e) => setAdjustForm(prev => ({ ...prev, defectiveQty: Number(e.target.value) || 0 }))}
+                  value={adjustForm.damagedQty}
+                  onChange={(e) => setAdjustForm(prev => ({ ...prev, damagedQty: Number(e.target.value) || 0 }))}
                   className="w-full h-8 px-2.5 rounded border border-slate-300 focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono"
                 />
               </div>

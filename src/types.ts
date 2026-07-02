@@ -118,9 +118,8 @@ export interface Inventory {
   skuCode: string;
   skuName?: string;
   availableQty: number;
-  lockedQty: number;
-  locationCode: string;
-  zoneCode: string;
+  reservedQty: number;
+  damagedQty?: number;
   customerId?: string;
 }
 

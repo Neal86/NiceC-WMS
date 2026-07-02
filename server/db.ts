@@ -254,9 +254,8 @@ function seedProgrammatically(state: DBState) {
             skuCode: sku.code,
             skuName: sku.name,
             availableQty: Math.floor(Math.random() * 250) + 10,
-            lockedQty: Math.floor(Math.random() * 15),
-            locationCode: `${zone}-${Math.floor(Math.random() * 9) + 1}-${Math.floor(Math.random() * 9) + 1}`,
-            zoneCode: `ZONE-${zone}`
+            reservedQty: Math.floor(Math.random() * 15),
+            damagedQty: Math.floor(Math.random() * 5)
           });
         }
       });
