@@ -1,8 +1,208 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { getDB, saveDB } from './server/db';
+import { getPrisma, checkDbConnection } from './server/prisma';
 import { OutboundOrder, OutboundOrderItem, OrderStatus, Wave, Feedback, FeedbackComment } from './src/types';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'NiceC-WMS-Secret-Token-Key-2026!';
+
+// Helper to decode current JWT user from headers
+function getCurrentUser(req: any) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET) as any;
+  } catch (err) {
+    return null;
+  }
+}
+
+// 1. Stock Reservation Helper on Order Creation
+async function reserveStock(orderId: string, customerId: string, skuId: string, qty: number, warehouseId: string) {
+  const hasDb = await checkDbConnection();
+  if (hasDb) {
+    const prisma = getPrisma();
+    try {
+      await prisma.$transaction(async (tx) => {
+        const inv = await tx.inventory.findFirst({
+          where: { skuId, warehouseId }
+        });
+        if (!inv || inv.availableQty < qty) {
+          throw new Error(`库存不足，无法预留 SKU: ${skuId}`);
+        }
+        
+        await tx.inventory.update({
+          where: { id: inv.id },
+          data: {
+            availableQty: inv.availableQty - qty,
+            reservedQty: inv.reservedQty + qty
+          }
+        });
+        
+        await tx.inventoryReservation.create({
+          data: {
+            customer: { connect: { id: customerId } },
+            orderId,
+            skuId,
+            skuCode: inv.skuCode,
+            warehouseId,
+            quantity: qty,
+            status: 'ACTIVE'
+          }
+        });
+        
+        await tx.inventoryTransaction.create({
+          data: {
+            customerId,
+            warehouseId,
+            skuId,
+            skuCode: inv.skuCode,
+            type: 'RESERVE',
+            direction: 'OUT',
+            quantity: qty,
+            beforeQty: inv.availableQty,
+            afterQty: inv.availableQty - qty,
+            reason: `Outbound Order ${orderId} Stock Reservation`
+          }
+        });
+      });
+    } catch (err: any) {
+      console.error('Prisma stock reservation failed:', err.message);
+    }
+  } else {
+    const db = getDB();
+    const inv = db.inventory.find(i => i.skuId === skuId);
+    if (inv) {
+      inv.availableQty = Math.max(0, inv.availableQty - qty);
+      inv.lockedQty = (inv.lockedQty || 0) + qty;
+    }
+    saveDB();
+  }
+}
+
+// 2. Stock Deduction Helper on Order Shipment
+async function deductStock(orderId: string) {
+  const hasDb = await checkDbConnection();
+  if (hasDb) {
+    const prisma = getPrisma();
+    try {
+      await prisma.$transaction(async (tx) => {
+        const reservations = await tx.inventoryReservation.findMany({
+          where: { orderId, status: 'ACTIVE' }
+        });
+        for (const resv of reservations) {
+          const inv = await tx.inventory.findFirst({
+            where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+          });
+          if (inv) {
+            await tx.inventory.update({
+              where: { id: inv.id },
+              data: {
+                reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+              }
+            });
+          }
+          await tx.inventoryReservation.update({
+            where: { id: resv.id },
+            data: { status: 'CONSUMED' }
+          });
+          
+          await tx.inventoryTransaction.create({
+            data: {
+              customerId: resv.customerId,
+              warehouseId: resv.warehouseId,
+              skuId: resv.skuId,
+              skuCode: resv.skuCode,
+              type: 'SHIP',
+              direction: 'OUT',
+              quantity: resv.quantity,
+              beforeQty: inv ? inv.availableQty + inv.reservedQty : 0,
+              afterQty: inv ? inv.availableQty + inv.reservedQty - resv.quantity : 0,
+              reason: `Outbound Order ${orderId} Shipped`
+            }
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Prisma stock deduction failed:', err);
+    }
+  } else {
+    const db = getDB();
+    const items = db.outboundOrderItems.filter(item => item.orderId === orderId);
+    for (const item of items) {
+      const inv = db.inventory.find(i => i.skuId === item.skuId);
+      if (inv) {
+        inv.lockedQty = Math.max(0, (inv.lockedQty || 0) - item.qty);
+      }
+    }
+    saveDB();
+  }
+}
+
+// 3. Stock Release Helper on Order Cancellation
+async function releaseStock(orderId: string) {
+  const hasDb = await checkDbConnection();
+  if (hasDb) {
+    const prisma = getPrisma();
+    try {
+      await prisma.$transaction(async (tx) => {
+        const reservations = await tx.inventoryReservation.findMany({
+          where: { orderId, status: 'ACTIVE' }
+        });
+        for (const resv of reservations) {
+          const inv = await tx.inventory.findFirst({
+            where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+          });
+          if (inv) {
+            await tx.inventory.update({
+              where: { id: inv.id },
+              data: {
+                availableQty: inv.availableQty + resv.quantity,
+                reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+              }
+            });
+          }
+          await tx.inventoryReservation.update({
+            where: { id: resv.id },
+            data: { status: 'RELEASED' }
+          });
+          
+          await tx.inventoryTransaction.create({
+            data: {
+              customerId: resv.customerId,
+              warehouseId: resv.warehouseId,
+              skuId: resv.skuId,
+              skuCode: resv.skuCode,
+              type: 'RELEASE',
+              direction: 'IN',
+              quantity: resv.quantity,
+              beforeQty: inv ? inv.availableQty : 0,
+              afterQty: inv ? inv.availableQty + resv.quantity : 0,
+              reason: `Outbound Order ${orderId} Cancelled`
+            }
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Prisma stock release failed:', err);
+    }
+  } else {
+    const db = getDB();
+    const items = db.outboundOrderItems.filter(item => item.orderId === orderId);
+    for (const item of items) {
+      const inv = db.inventory.find(i => i.skuId === item.skuId);
+      if (inv) {
+        inv.availableQty += item.qty;
+        inv.lockedQty = Math.max(0, (inv.lockedQty || 0) - item.qty);
+      }
+    }
+    saveDB();
+  }
+}
 
 // Define port - always 3000 according to platform rules
 const PORT = 3000;
@@ -20,28 +220,102 @@ async function startServer() {
   // ==========================================
   // Auth API
   // ==========================================
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     
-    // Accept standard demo logins
-    if (username === 'neal@nicec.net' || username === 'operator') {
-      const db = getDB();
-      const user = db.users.find(u => u.username === username);
-      if (user) {
-        // Return a mock JWT token and user info
-        return res.json({
-          status: 'success',
-          user: {
-            ...user,
-            token: `mock-jwt-token-for-${user.id}`
+    // 1. Try real database login if available
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const dbUser = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { username: username },
+              { email: username }
+            ]
           }
         });
+        
+        if (dbUser && dbUser.status === 'ACTIVE') {
+          // Compare passwords
+          const isMatch = bcrypt.compareSync(password, dbUser.password);
+          if (isMatch) {
+            const token = jwt.sign(
+              { 
+                id: dbUser.id, 
+                username: dbUser.username, 
+                email: dbUser.email, 
+                role: dbUser.role, 
+                customerId: dbUser.customerId 
+              },
+              JWT_SECRET,
+              { expiresIn: '24h' }
+            );
+            
+            return res.json({
+              status: 'success',
+              user: {
+                id: dbUser.id,
+                username: dbUser.username,
+                email: dbUser.email,
+                role: dbUser.role,
+                customerId: dbUser.customerId,
+                token
+              }
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Prisma auth error:', err);
       }
+    }
+
+    // 2. Local Fallback Database
+    const db = getDB();
+    let localUser = db.users.find(u => u.username === username || u.email === username);
+    
+    // Add client user on-the-fly to the fallback database if it's not present
+    if (username === 'client@nicec.net' && !localUser) {
+      localUser = {
+        id: 'usr_client',
+        username: 'yukon_client',
+        email: 'client@nicec.net',
+        role: 'CLIENT' as any,
+        customerId: 'cust_1',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      } as any;
+      db.users.push(localUser);
+      saveDB();
+    }
+
+    if (localUser) {
+      const u = localUser as any;
+      const token = jwt.sign(
+        { 
+          id: u.id, 
+          username: u.username, 
+          email: u.email, 
+          role: u.role, 
+          customerId: u.customerId 
+        },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      
+      return res.json({
+        status: 'success',
+        user: {
+          ...localUser,
+          token
+        }
+      });
     }
     
     return res.status(401).json({
       status: 'error',
-      message: '用户名或密码错误。默认用户名: neal@nicec.net 或 operator'
+      message: '用户名或密码错误。可用账号: neal@nicec.net、operator 或 client@nicec.net'
     });
   });
 
@@ -109,6 +383,12 @@ async function startServer() {
     } = req.query;
 
     let orders = [...db.outboundOrders];
+
+    // Role-based customer data isolation
+    const user = getCurrentUser(req);
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      orders = orders.filter(ord => ord.customerId === user.customerId);
+    }
 
     // 1. Resolve customer & logistics details
     orders = orders.map(ord => {
@@ -275,7 +555,7 @@ async function startServer() {
   });
 
   // POST /api/outbound-orders (Create)
-  app.post('/api/outbound-orders', (req, res) => {
+  app.post('/api/outbound-orders', async (req, res) => {
     const db = getDB();
     const {
       customerId,
@@ -288,7 +568,14 @@ async function startServer() {
       items = []
     } = req.body;
 
-    if (!customerId || !logisticsChannelId || !carrierId || !recipient || items.length === 0) {
+    // Role-based customer data isolation
+    const user = getCurrentUser(req);
+    let resolvedCustomerId = customerId;
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      resolvedCustomerId = user.customerId;
+    }
+
+    if (!resolvedCustomerId || !logisticsChannelId || !carrierId || !recipient || items.length === 0) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -306,7 +593,7 @@ async function startServer() {
       remark: remark || '-',
       totalWeight,
       totalQty,
-      customerId,
+      customerId: resolvedCustomerId,
       logisticsChannelId,
       carrierId,
       waveId: null,
@@ -328,6 +615,11 @@ async function startServer() {
       category: item.category || '未分类'
     }));
 
+    // Trigger stock reservation for items
+    for (const item of newItems) {
+      await reserveStock(newOrderId, resolvedCustomerId, item.skuId, item.qty, 'wh_1');
+    }
+
     db.outboundOrders.push(newOrder);
     db.outboundOrderItems.push(...newItems);
     saveDB();
@@ -342,7 +634,7 @@ async function startServer() {
   });
 
   // PUT /api/outbound-orders/:id (Update)
-  app.put('/api/outbound-orders/:id', (req, res) => {
+  app.put('/api/outbound-orders/:id', async (req, res) => {
     const db = getDB();
     const index = db.outboundOrders.findIndex(o => o.id === req.params.id);
 
@@ -381,6 +673,10 @@ async function startServer() {
       
       updatedOrder.totalQty = newItems.reduce((sum, item) => sum + item.qty, 0);
       updatedOrder.totalWeight = parseFloat((updatedOrder.totalQty * 1.2).toFixed(2));
+    }
+
+    if (updatedOrder.status === 'SHIPPED' && currentOrder.status !== 'SHIPPED') {
+      await deductStock(currentOrder.id);
     }
 
     db.outboundOrders[index] = updatedOrder;
@@ -463,7 +759,7 @@ async function startServer() {
   });
 
   // POST /api/outbound-orders/:id/cancel
-  app.post('/api/outbound-orders/:id/cancel', (req, res) => {
+  app.post('/api/outbound-orders/:id/cancel', async (req, res) => {
     const db = getDB();
     const ord = db.outboundOrders.find(o => o.id === req.params.id);
     if (!ord) return res.status(404).json({ error: 'Order not found' });
@@ -471,6 +767,9 @@ async function startServer() {
     if (ord.status === 'SHIPPED') {
       return res.status(400).json({ error: '已出库订单无法取消' });
     }
+    
+    // Release inventory reservation
+    await releaseStock(ord.id);
     
     ord.status = 'CANCELLED';
     
@@ -658,7 +957,12 @@ async function startServer() {
   // ==========================================
   app.get('/api/skus', (req, res) => {
     const db = getDB();
-    res.json(db.skus);
+    let skus = db.skus;
+    const user = getCurrentUser(req);
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      skus = skus.filter(s => s.customerId === user.customerId);
+    }
+    res.json(skus);
   });
 
   app.get('/api/skus/:id', (req, res) => {
@@ -795,7 +1099,12 @@ async function startServer() {
   // ==========================================
   app.get('/api/inventory', (req, res) => {
     const db = getDB();
-    res.json(db.inventory);
+    let inventory = db.inventory;
+    const user = getCurrentUser(req);
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      inventory = inventory.filter((inv: any) => inv.customerId === user.customerId);
+    }
+    res.json(inventory);
   });
 
   app.put('/api/inventory/:id', (req, res) => {
@@ -934,6 +1243,12 @@ Based on the current database state, all inventory levels are synced. Let me kno
     const { type, status, priority, userId, warehouseId, operationScope, search } = req.query;
 
     let list = [...db.feedbacks];
+
+    // Role-based customer data isolation
+    const user = getCurrentUser(req);
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      list = list.filter((f: any) => f.customerId === user.customerId || f.userId === user.id);
+    }
 
     if (type) list = list.filter(f => f.type === type);
     if (status) list = list.filter(f => f.status === status);
@@ -1225,9 +1540,17 @@ Based on the current database state, all inventory levels are synced. Let me kno
 
   // Auth Me endpoint
   app.get('/api/auth/me', (req, res) => {
+    const user = getCurrentUser(req);
+    if (user) {
+      return res.json(user);
+    }
     const db = getDB();
-    // Return the main admin user as current authenticated session
+    // Return the default user if no token is active
     res.json(db.users[0]);
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    res.json({ status: 'success', message: 'Logged out successfully' });
   });
 
   // ==========================================

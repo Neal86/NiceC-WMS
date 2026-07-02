@@ -11,9 +11,11 @@ generator client {
 }
 
 enum Role {
-  admin
-  operator
-  manager
+  SUPER_ADMIN
+  ADMIN
+  WAREHOUSE_MANAGER
+  WAREHOUSE_OPERATOR
+  CLIENT
 }
 
 enum OrderStatus {
@@ -32,36 +34,44 @@ enum PrintStatus {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  username  String   @unique
-  email     String   @unique
-  password  String   // Hash value
-  role      Role     @default(operator)
-  avatar    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String     @id @default(uuid())
+  username    String     @unique
+  email       String     @unique
+  password    String     // Hash value
+  role        Role       @default(WAREHOUSE_OPERATOR)
+  avatar      String?
+  customerId  String?
+  customer    Customer?  @relation(fields: [customerId], references: [id])
+  warehouseId String?
+  status      String     @default("ACTIVE")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 }
 
 model Warehouse {
-  id        String   @id @default(uuid())
-  name      String
-  code      String   @unique
-  address   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String      @id @default(uuid())
+  name        String
+  code        String      @unique
+  address     String
+  inventories Inventory[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
 model Customer {
-  id        String          @id @default(uuid())
-  name      String
-  code      String          @unique // e.g. Yukon(1108037)
-  contact   String?
-  email     String?
-  orders    OutboundOrder[]
-  skus      SKU[]
-  products  Product[]
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  id           String                 @id @default(uuid())
+  name         String
+  code         String                 @unique // e.g. Yukon(1108037)
+  contact      String?
+  email        String?
+  orders       OutboundOrder[]
+  skus         SKU[]
+  products     Product[]
+  users        User[]
+  inventories  Inventory[]
+  reservations InventoryReservation[]
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
 }
 
 model Product {
@@ -202,5 +212,55 @@ model FeedbackComment {
   comment    String
   isInternal Boolean  @default(false)
   createdAt  DateTime @default(now())
+}
+
+model Inventory {
+  id           String    @id @default(uuid())
+  customerId   String
+  customer     Customer  @relation(fields: [customerId], references: [id])
+  skuId        String
+  skuCode      String
+  warehouseId  String
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id])
+  availableQty Int       @default(0)
+  reservedQty  Int       @default(0)
+  damagedQty   Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([skuId, warehouseId])
+}
+
+model InventoryTransaction {
+  id             String   @id @default(uuid())
+  customerId     String
+  warehouseId    String
+  skuId          String
+  skuCode        String
+  type           String   // INBOUND_RECEIVED, PUTAWAY, OUTBOUND_RESERVED, OUTBOUND_SHIPPED, ORDER_CANCEL_RELEASE, etc.
+  direction      String   // IN, OUT, LOCK, RELEASE
+  quantity       Int
+  beforeQty      Int
+  afterQty       Int
+  referenceType  String?
+  referenceId    String?
+  reason         String?
+  operatorUserId String?
+  createdAt      DateTime @default(now())
+}
+
+model InventoryReservation {
+  id          String    @id @default(uuid())
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id])
+  orderId     String
+  orderItemId String?
+  skuId       String
+  skuCode     String
+  warehouseId String
+  quantity    Int
+  status      String    // ACTIVE, RELEASED, CONSUMED
+  createdAt   DateTime  @default(now())
+  releasedAt  DateTime?
 }
 

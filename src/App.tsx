@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Login from './components/Login';
+import ClientPortal from './components/ClientPortal';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import FilterSection from './components/FilterSection';
@@ -293,6 +294,11 @@ export default function App() {
   // If user is not logged in, display the Login Screen
   if (!currentUser) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // If user is a Client, display the Client Portal
+  if (currentUser.role === 'CLIENT' || currentUser.role === 'Client' || currentUser.role === 'customer' || currentUser.role === 'CUSTOMER') {
+    return <ClientPortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 
   // Define tab headers with counts matching the screenshot

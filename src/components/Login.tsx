@@ -125,15 +125,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
         <div className="mt-8 pt-6 border-t border-slate-700/40 text-center">
           <p className="text-slate-500 text-[11px]">演示环境可用账号：</p>
-          <div className="flex justify-center gap-4 mt-2 text-slate-400 text-xs font-mono">
+          <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2 text-slate-400 text-xs font-mono">
             <div>
               <span className="text-slate-500">管理员:</span> neal@nicec.net
             </div>
             <div>
               <span className="text-slate-500">操作员:</span> operator
             </div>
+            <div>
+              <span className="text-slate-500">外部客户:</span> client@nicec.net
+            </div>
           </div>
-          <div className="text-[10px] text-slate-600 mt-2">密码随意输入即可</div>
+          <div className="text-[10px] text-slate-600 mt-2">密码随意输入即可 (或 admin123 / client123 / operator123)</div>
         </div>
       </div>
     </div>

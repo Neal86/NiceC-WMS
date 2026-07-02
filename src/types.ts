@@ -7,9 +7,11 @@ export interface User {
   id: string;
   username: string;
   email: string;
-  role: 'admin' | 'operator' | 'manager';
+  role: 'admin' | 'operator' | 'manager' | 'CLIENT' | 'SUPER_ADMIN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_OPERATOR';
   avatar: string;
   token?: string;
+  customerId?: string;
+  warehouseId?: string;
 }
 
 export interface Warehouse {
@@ -119,6 +121,7 @@ export interface Inventory {
   lockedQty: number;
   locationCode: string;
   zoneCode: string;
+  customerId?: string;
 }
 
 export interface OperationLog {
@@ -135,6 +138,7 @@ export interface OperationLog {
 export interface Feedback {
   id: string;
   organizationId?: string;
+  customerId?: string;
   userId: string;
   warehouseId?: string | null;
   operationScope?: string | null;
@@ -169,7 +173,7 @@ export interface FeedbackComment {
 
 // Search and filtering params
 export interface FilterParams {
-  tab: OrderStatus;
+  tab?: OrderStatus;
   customerNameCode?: string;
   orderType?: string;
   salesPlatform?: string;
