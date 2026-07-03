@@ -1,21 +1,37 @@
 #!/bin/sh
-set -e
+set -eu
 
-echo "=== Starting NiceC-WMS Prisma DB Initialization ==="
+echo "=== Starting NiceC WMS ==="
+echo "NODE_ENV=${NODE_ENV:-production}"
+echo "PORT=${PORT:-3000}"
 
-# Generate Prisma client again to ensure correct runtime bindings
-npx prisma generate
-
-# Check if database is reachable before pushing
-if [ -n "$DATABASE_URL" ]; then
-  echo "Applying database schema changes via prisma db push..."
-  npx prisma db push --accept-data-loss || echo "Prisma DB push skipped or failed (DB might be offline/mock mode)"
-  
-  echo "Seeding default NiceC-WMS records..."
-  npx prisma db seed || echo "Prisma DB seeding skipped or failed (records may already exist)"
-else
-  echo "DATABASE_URL not specified, running in mock mode fallback."
+if [ -z "${JWT_SECRET:-}" ] || [ "${JWT_SECRET:-}" = "change-this-secret-in-production" ] || [ "${JWT_SECRET:-}" = "replace-with-a-long-random-production-secret" ]; then
+  if [ "${NODE_ENV:-production}" = "production" ]; then
+    echo "ERROR: JWT_SECRET must be set to a strong production value."
+    exit 1
+  fi
 fi
 
-echo "=== NiceC-WMS Startup complete. Starting Express server... ==="
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "Generating Prisma client..."
+  npx prisma generate
+
+  if [ "${RUN_DB_PUSH:-false}" = "true" ]; then
+    echo "RUN_DB_PUSH=true; applying Prisma schema with db push."
+    npx prisma db push
+  else
+    echo "RUN_DB_PUSH is not true; skipping automatic schema push for production safety."
+  fi
+
+  if [ "${RUN_DB_SEED:-false}" = "true" ]; then
+    echo "RUN_DB_SEED=true; seeding default records."
+    npx prisma db seed
+  else
+    echo "RUN_DB_SEED is not true; skipping seed."
+  fi
+else
+  echo "DATABASE_URL is not set; app will use JSON fallback/mock mode where supported."
+fi
+
+echo "=== Launching NiceC WMS server ==="
 exec node dist/server.cjs
