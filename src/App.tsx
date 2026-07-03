@@ -298,12 +298,12 @@ export default function App() {
   }
 
   // If user is a Client, display the Client Portal
-  if (currentUser.role === 'CLIENT' || currentUser.role === 'Client' || currentUser.role === 'customer' || currentUser.role === 'CUSTOMER') {
+  if (currentUser.role === 'CLIENT' || currentUser.role === 'Client' || currentUser.role === 'client' || currentUser.role === 'customer' || currentUser.role === 'CUSTOMER') {
     return <ClientPortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 
   // If user is a Warehouse Operator, display the Warehouse Portal
-  if (currentUser.role === 'WAREHOUSE_OPERATOR' || currentUser.role === 'OPERATOR') {
+  if (currentUser.role === 'WAREHOUSE_OPERATOR' || currentUser.role === 'OPERATOR' || currentUser.role === 'operator') {
     return <WarehousePortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 
