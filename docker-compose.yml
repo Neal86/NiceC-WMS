@@ -1,42 +1,53 @@
-version: '3.8'
-
 services:
-  # Database Service (PostgreSQL)
-  db:
-    image: postgres:15-alpine
+  postgres:
+    image: postgres:16-alpine
     container_name: nicec-wms-postgres
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: nicec
-      POSTGRES_PASSWORD: nicec_password
-      POSTGRES_DB: nicec_wms
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-nicec_wms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-nicec_wms}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nicec"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nicec_wms} -d ${POSTGRES_DB:-nicec_wms}"]
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+    networks:
+      - nicec_wms
 
-  # Full-Stack Application Service
   wms-app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: nicec-wms-app
-    restart: always
-    ports:
-      - "3000:3000"
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://nicec:nicec_password@db:5432/nicec_wms?schema=public
-      - JWT_SECRET=change-this-secret-in-production
-      - PORT=3000
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nicec_wms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nicec_wms}?schema=public
+      RUN_DB_PUSH: ${RUN_DB_PUSH:-false}
+      RUN_DB_SEED: ${RUN_DB_SEED:-false}
+    ports:
+      - "${APP_PORT:-3000}:3000"
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - nicec_wms
 
 volumes:
-  pgdata:
+  postgres_data:
+
+networks:
+  nicec_wms:
+    driver: bridge
