@@ -9,7 +9,7 @@ const api = axios.create({
   }
 });
 
-// Automatically inject mock token from localStorage if available
+// Automatically inject JWT token from localStorage if available
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('wms_token');
   if (token && config.headers) {
@@ -19,6 +19,18 @@ api.interceptors.request.use((config) => {
 }, (error) => {
   return Promise.reject(error);
 });
+
+// Keep the UI in a safe state when the backend rejects an expired or invalid token.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem('wms_token');
+      localStorage.removeItem('wms_user');
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const authApi = {
   login: async (username: string, password?: string) => {
@@ -36,6 +48,16 @@ export const authApi = {
   getCurrentUser: () => {
     const userStr = localStorage.getItem('wms_user');
     return userStr ? JSON.parse(userStr) : null;
+  },
+  refreshCurrentUser: async () => {
+    const response = await api.get('/auth/me');
+    if (response.data?.user) {
+      const current = authApi.getCurrentUser() || {};
+      const merged = { ...current, ...response.data.user, token: current.token };
+      localStorage.setItem('wms_user', JSON.stringify(merged));
+      return merged;
+    }
+    return response.data;
   }
 };
 
@@ -64,6 +86,10 @@ export const outboundApi = {
     const response = await api.post(`/outbound-orders/${id}/cancel`);
     return response.data;
   },
+  shipOrder: async (id: string) => {
+    const response = await api.post(`/outbound-orders/${id}/ship`);
+    return response.data;
+  },
   printLabel: async (id: string) => {
     const response = await api.post(`/outbound-orders/${id}/print-label`);
     return response.data;
@@ -80,12 +106,12 @@ export const outboundApi = {
     const response = await api.post('/outbound-orders/batch-print-pick-list', { orderIds });
     return response.data;
   },
-  exportOrders: async () => {
-    const response = await api.post('/outbound-orders/export');
+  exportOrders: async (params?: FilterParams) => {
+    const response = await api.post('/outbound-orders/export', params || {});
     return response.data;
   },
-  importOrders: async () => {
-    const response = await api.post('/outbound-orders/import');
+  importOrders: async (rows?: unknown[]) => {
+    const response = await api.post('/outbound-orders/import', { rows: rows || [] });
     return response.data;
   }
 };
@@ -105,6 +131,18 @@ export const metadataApi = {
   },
   getProducts: async () => {
     const response = await api.get('/products');
+    return response.data;
+  },
+  getSkus: async () => {
+    const response = await api.get('/skus');
+    return response.data;
+  },
+  getWarehouses: async () => {
+    const response = await api.get('/warehouses');
+    return response.data;
+  },
+  getInventory: async () => {
+    const response = await api.get('/inventory');
     return response.data;
   }
 };
@@ -254,6 +292,14 @@ export const inventoryApi = {
   updateInventory: async (id: string, data: any) => {
     const response = await api.put(`/inventory/${id}`, data);
     return response.data;
+  },
+  transferInventory: async (data: any) => {
+    const response = await api.post('/inventory/transfer', data);
+    return response.data;
+  },
+  adjustInventory: async (data: any) => {
+    const response = await api.post('/inventory/adjust', data);
+    return response.data;
   }
 };
 
@@ -275,6 +321,52 @@ export const dashboardApi = {
 export const logApi = {
   getOperationLogs: async () => {
     const response = await api.get('/operation-logs');
+    return response.data;
+  }
+};
+
+export const userApi = {
+  getUsers: async () => {
+    const response = await api.get('/users');
+    return response.data;
+  },
+  createUser: async (data: { username: string; email?: string; name?: string; role: string; password?: string; customerId?: string; warehouseId?: string }) => {
+    const response = await api.post('/users', data);
+    return response.data;
+  },
+  updateUser: async (id: string, data: any) => {
+    const response = await api.put(`/users/${id}`, data);
+    return response.data;
+  },
+  toggleUserStatus: async (id: string, status: 'ACTIVE' | 'DISABLED') => {
+    const response = await api.put(`/users/${id}`, { status });
+    return response.data;
+  },
+  resetPassword: async (id: string, password: string) => {
+    const response = await api.post(`/users/${id}/reset-password`, { password });
+    return response.data;
+  },
+  deleteUser: async (id: string) => {
+    const response = await api.delete(`/users/${id}`);
+    return response.data;
+  }
+};
+
+export const billingApi = {
+  getRules: async () => {
+    const response = await api.get('/billing-rules');
+    return response.data;
+  },
+  createRule: async (data: any) => {
+    const response = await api.post('/billing-rules', data);
+    return response.data;
+  },
+  updateRule: async (id: string, data: any) => {
+    const response = await api.put(`/billing-rules/${id}`, data);
+    return response.data;
+  },
+  deleteRule: async (id: string) => {
+    const response = await api.delete(`/billing-rules/${id}`);
     return response.data;
   }
 };
