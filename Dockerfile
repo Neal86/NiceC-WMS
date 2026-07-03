@@ -1,36 +1,42 @@
-# Multi-stage build for optimal image size
-FROM node:18-alpine AS builder
+# syntax=docker/dockerfile:1.7
 
-WORKDIR /usr/src/app
-
-# Install dependencies first (leverage Docker layers)
+FROM node:22-bookworm-slim AS deps
+WORKDIR /app
+ENV NODE_ENV=development
 COPY package*.json ./
+COPY prisma ./prisma
 RUN npm ci
 
-# Copy codebase
+FROM node:22-bookworm-slim AS builder
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Build Vite frontend and bundle Express server with esbuild
+RUN npm run prisma:generate
 RUN npm run build
+RUN npm prune --omit=dev
 
-# Production Runner stage
-FROM node:18-alpine AS runner
-
-WORKDIR /usr/src/app
-
-# Copy built artifacts, node_modules (including prisma CLI/dependencies) and schema
-COPY --from=builder /usr/src/app/dist ./dist
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/prisma ./prisma
-COPY --from=builder /usr/src/app/package*.json ./
-COPY --from=builder /usr/src/app/entrypoint.sh ./entrypoint.sh
-
-RUN chmod +x ./entrypoint.sh
-
-# Set production variables
+FROM node:22-bookworm-slim AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
+RUN addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nicec
+
+COPY --from=builder --chown=nicec:nodejs /app/package*.json ./
+COPY --from=builder --chown=nicec:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nicec:nodejs /app/dist ./dist
+COPY --from=builder --chown=nicec:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nicec:nodejs /app/entrypoint.sh ./entrypoint.sh
+COPY --from=builder --chown=nicec:nodejs /app/.env.example ./.env.example
+
+RUN chmod +x ./entrypoint.sh
+
+USER nicec
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["./entrypoint.sh"]
