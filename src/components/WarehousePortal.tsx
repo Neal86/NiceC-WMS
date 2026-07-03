@@ -205,7 +205,7 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
   const loadReturnOrders = useCallback(async () => {
     setReturnsLoading(true);
     try {
-      const data = await returnApi.getOrders();
+      const data = await returnApi.getReturns();
       setReturnOrders(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Failed to load return orders', err);
@@ -217,7 +217,7 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
 
   const handleReturnReceive = async (orderId: string) => {
     try {
-      await returnApi.receive(orderId);
+      await returnApi.receiveReturn(orderId);
       await loadReturnOrders();
     } catch (err) {
       console.error('Failed to receive return order', err);

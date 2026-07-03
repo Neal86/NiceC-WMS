@@ -487,4 +487,59 @@ export const billingApi = {
   },
 };
 
+export const inboundApi = {
+  getOrders: async (params?: any) => {
+    const response = await api.get('/inbound-orders', { params });
+    return response.data;
+  },
+  receive: async (orderId: string, items?: any[]) => {
+    const response = await api.post(`/inbound-orders/${orderId}/receive`, { items });
+    return response.data;
+  }
+};
+
+export const putawayApi = {
+  getTasks: async (params?: any) => {
+    const response = await api.get('/putaway-tasks', { params });
+    return response.data;
+  },
+  complete: async (taskId: string) => {
+    const response = await api.post(`/putaway-tasks/${taskId}/complete`);
+    return response.data;
+  }
+};
+
+export const pickApi = {
+  getTasks: async (params?: any) => {
+    const response = await api.get('/pick-tasks', { params });
+    return response.data;
+  },
+  complete: async (taskId: string) => {
+    const response = await api.post(`/pick-tasks/${taskId}/complete`);
+    return response.data;
+  }
+};
+
+export const reviewApi = {
+  getTasks: async (params?: any) => {
+    const response = await api.get('/review-tasks', { params });
+    return response.data;
+  },
+  complete: async (taskId: string) => {
+    const response = await api.post(`/review-tasks/${taskId}/complete`);
+    return response.data;
+  }
+};
+
+export const exceptionApi = {
+  getCases: async (params?: any) => {
+    const response = await api.get('/exception-cases', { params });
+    return response.data;
+  },
+  resolve: async (caseId: string) => {
+    const response = await api.post(`/exception-cases/${caseId}/resolve`);
+    return response.data;
+  }
+};
+
 export default api;
