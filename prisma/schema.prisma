@@ -54,6 +54,7 @@ model Warehouse {
   code        String      @unique
   address     String
   inventories Inventory[]
+  locations   Location[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -65,6 +66,7 @@ model Customer {
   contact      String?
   email        String?
   orders       OutboundOrder[]
+  inboundOrders InboundOrder[]
   skus         SKU[]
   products     Product[]
   users        User[]
@@ -262,5 +264,260 @@ model InventoryReservation {
   status      String    // ACTIVE, RELEASED, CONSUMED
   createdAt   DateTime  @default(now())
   releasedAt  DateTime?
+}
+
+model Location {
+  id          String    @id @default(uuid())
+  code        String    @unique // e.g. ZONE-A-1-1
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  zoneCode    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model InventoryLocation {
+  id           String    @id @default(uuid())
+  warehouseId  String
+  locationId   String
+  skuId        String
+  skuCode      String
+  availableQty Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model InboundOrder {
+  id           String             @id @default(uuid())
+  orderNo      String             @unique // ASNXXXXXXXXXX
+  customerId   String
+  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  status       String             @default("PENDING") // PENDING, SUBMITTED, RECEIVED, CANCELLED
+  warehouseId  String
+  remark       String             @default("-")
+  items        InboundOrderItem[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+}
+
+model InboundOrderItem {
+  id             String       @id @default(uuid())
+  orderId        String
+  order          InboundOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  skuId          String
+  skuCode        String
+  qtyExpected    Int          @default(0)
+  qtyReceived    Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model PutawayTask {
+  id             String    @id @default(uuid())
+  taskNo         String    @unique // PAXXXXXXXXXX
+  inboundOrderId String?
+  skuId          String
+  skuCode        String
+  warehouseId    String
+  locationId     String?
+  quantity       Int
+  status         String    @default("PENDING") // PENDING, PROCESSING, COMPLETED
+  operatorId     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model PickTask {
+  id          String    @id @default(uuid())
+  taskNo      String    @unique // PKXXXXXXXXXX
+  waveId      String?
+  orderId     String?
+  skuId       String
+  skuCode     String
+  warehouseId String
+  quantity    Int
+  status      String    @default("PENDING") // PENDING, PROCESSING, COMPLETED
+  operatorId  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model ReviewTask {
+  id          String    @id @default(uuid())
+  orderId     String    @unique
+  status      String    @default("PENDING") // PENDING, COMPLETED
+  operatorId  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Package {
+  id          String    @id @default(uuid())
+  packageNo   String    @unique // PKGXXXXXXXXXX
+  orderId     String
+  weight      Float     @default(0.0)
+  length      Float     @default(0.0)
+  width       Float     @default(0.0)
+  height      Float     @default(0.0)
+  trackingNo  String?
+  labelUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model ExceptionCase {
+  id          String    @id @default(uuid())
+  caseNo      String    @unique // EXCXXXXXXXXXX
+  orderId     String?
+  customerId  String?
+  type        String    // e.g. DAMAGED_ON_ARRIVAL, ADDRESS_ERROR
+  description String
+  status      String    @default("PENDING") // PENDING, RESOLVED
+  resolution  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model ReturnOrder {
+  id           String       @id @default(uuid())
+  returnNo     String       @unique // RTXXXXXXXXXX
+  orderId      String?
+  customerId   String
+  status       String       @default("PENDING") // PENDING, RECEIVED, PROCESSED
+  items        ReturnItem[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model ReturnItem {
+  id            String      @id @default(uuid())
+  returnOrderId String
+  returnOrder   ReturnOrder @relation(fields: [returnOrderId], references: [id], onDelete: Cascade)
+  skuId         String
+  skuCode       String
+  qtyExpected   Int         @default(0)
+  qtyReceived   Int         @default(0)
+  condition     String      @default("RESTOCK") // RESTOCK, DAMAGED
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model RelabelOrder {
+  id          String    @id @default(uuid())
+  orderNo     String    @unique // RLXXXXXXXXXX
+  customerId  String
+  skuId       String
+  oldSkuCode  String
+  newSkuCode  String
+  quantity    Int
+  status      String    @default("PENDING") // PENDING, COMPLETED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model WorkOrder {
+  id          String    @id @default(uuid())
+  orderNo     String    @unique // WOXXXXXXXXXX
+  customerId  String
+  type        String    // PHOTO, LABELLING, DESTRUCTION
+  description String
+  status      String    @default("PENDING") // PENDING, COMPLETED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model BillingRule {
+  id          String    @id @default(uuid())
+  name        String
+  code        String    @unique // e.g. OUTBOUND_FEE, STORAGE_FEE
+  type        String    // e.g. OUTBOUND, STORAGE, INBOUND
+  rate        Float     @default(0.0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model BillingRecord {
+  id          String    @id @default(uuid())
+  customerId  String
+  orderId     String?
+  type        String    // OUTBOUND, STORAGE, INBOUND
+  amount      Float     @default(0.0)
+  currency    String    @default("USD")
+  status      String    @default("UNPAID") // UNPAID, PAID
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Invoice {
+  id          String    @id @default(uuid())
+  invoiceNo   String    @unique // INVXXXXXXXXXX
+  customerId  String
+  amount      Float     @default(0.0)
+  status      String    @default("UNPAID") // UNPAID, PAID
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model ApiKey {
+  id          String    @id @default(uuid())
+  customerId  String
+  key         String    @unique
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+}
+
+model WebhookEndpoint {
+  id          String    @id @default(uuid())
+  customerId  String
+  url         String
+  secret      String
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+}
+
+model WebhookEvent {
+  id          String    @id @default(uuid())
+  customerId  String
+  eventType   String
+  payload     String    // JSON string
+  status      String    @default("PENDING") // PENDING, SENT, FAILED
+  createdAt   DateTime  @default(now())
+}
+
+model StoreConnection {
+  id          String    @id @default(uuid())
+  customerId  String
+  platform    String    // SHOPIFY, AMAZON, TIKTOK, WALMART, TEMU, SHEIN
+  shopName    String
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+}
+
+model ShippingProvider {
+  id          String    @id @default(uuid())
+  name        String
+  code        String    @unique // EASYPOST, SHIPPO, FEDEX
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+}
+
+model OperationLog {
+  id          String    @id @default(uuid())
+  userId      String
+  username    String
+  action      String
+  details     String?
+  ipAddress   String?
+  createdAt   DateTime  @default(now())
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  userId      String
+  action      String
+  resource    String
+  resourceId  String?
+  changes     String?   // JSON string
+  createdAt   DateTime  @default(now())
 }
 

@@ -265,6 +265,24 @@ async function main() {
     },
   });
 
+  // Seeding Locations
+  await prisma.location.createMany({
+    data: [
+      { id: 'loc_a1', code: 'A-1-1', warehouseId: 'wh_1', zoneCode: 'ZONE-A' },
+      { id: 'loc_a2', code: 'A-1-2', warehouseId: 'wh_1', zoneCode: 'ZONE-A' },
+      { id: 'loc_b1', code: 'B-1-1', warehouseId: 'wh_1', zoneCode: 'ZONE-B' }
+    ]
+  }).catch(() => {});
+
+  // Seeding Billing Rules
+  await prisma.billingRule.createMany({
+    data: [
+      { id: 'br_1', name: '出库单操作费 (Outbound Handling Fee)', code: 'OUTBOUND_FEE', type: 'OUTBOUND', rate: 2.5 },
+      { id: 'br_2', name: '仓储费 (Storage Fee/cbm/day)', code: 'STORAGE_FEE', type: 'STORAGE', rate: 0.1 },
+      { id: 'br_3', name: '入库理货费 (Inbound Sorting Fee)', code: 'INBOUND_FEE', type: 'INBOUND', rate: 1.5 }
+    ]
+  }).catch(() => {});
+
   console.log('Seed completed successfully!');
 }
 

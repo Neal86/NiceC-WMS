@@ -110,6 +110,7 @@ async function reserveStock(orderId: string, customerId: string, skuId: string, 
       });
     } catch (err: any) {
       console.error('Prisma stock reservation failed:', err.message);
+      throw err;
     }
   } else {
     const db = getDB();
@@ -248,6 +249,20 @@ const PORT = 3000;
 async function startServer() {
   const app = express();
   app.use(express.json());
+
+  // Health Check APIs
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  app.get('/api/health/db', async (req, res) => {
+    const hasDb = await checkDbConnection();
+    res.json({
+      status: hasDb ? 'healthy' : 'fallback',
+      database: hasDb ? 'PostgreSQL (Prisma)' : 'file-based JSON fallback',
+      timestamp: new Date().toISOString()
+    });
+  });
 
   // Simple Logger
   app.use((req, res, next) => {
@@ -2453,6 +2468,586 @@ Based on the current database state, all inventory levels are synced. Let me kno
 
   app.post('/api/auth/logout', (req, res) => {
     res.json({ status: 'success', message: 'Logged out successfully' });
+  });
+
+  // ==========================================
+  // Additional WMS MVP Core APIs
+  // ==========================================
+
+  // 1. Locations APIs
+  app.get('/api/locations', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const locations = await prisma.location.findMany();
+        return res.json(locations);
+      } catch (err) {
+        console.error('Prisma locations fetch error:', err);
+      }
+    }
+    res.json([
+      { id: 'loc_a1', code: 'A-1-1', warehouseId: 'wh_1', zoneCode: 'ZONE-A' },
+      { id: 'loc_a2', code: 'A-1-2', warehouseId: 'wh_1', zoneCode: 'ZONE-A' },
+      { id: 'loc_b1', code: 'B-1-1', warehouseId: 'wh_1', zoneCode: 'ZONE-B' }
+    ]);
+  });
+
+  app.post('/api/locations', requireAuth, async (req: any, res) => {
+    const { code, warehouseId, zoneCode } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newLoc = await prisma.location.create({
+          data: { code, warehouseId, zoneCode }
+        });
+        return res.status(201).json(newLoc);
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.status(201).json({ id: 'loc_' + Math.random().toString(36).substr(2, 9), code, warehouseId, zoneCode });
+  });
+
+  // 2. Inventory Detail & Additional APIs
+  app.get('/api/inventory/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const inv = await prisma.inventory.findUnique({
+          where: { id: req.params.id },
+          include: { customer: true }
+        });
+        if (!inv) return res.status(404).json({ error: 'Inventory not found' });
+        return res.json(inv);
+      } catch (err) {
+        console.error('Prisma inventory fetch error:', err);
+      }
+    }
+    const db = getDB();
+    const inv = db.inventory.find(i => i.id === req.params.id);
+    if (!inv) return res.status(404).json({ error: 'Inventory not found' });
+    res.json(inv);
+  });
+
+  app.get('/api/inventory-transactions', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const where: any = {};
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          where.customerId = user.customerId;
+        }
+        const txs = await prisma.inventoryTransaction.findMany({ where, orderBy: { createdAt: 'desc' } });
+        return res.json(txs);
+      } catch (err) {
+        console.error('Prisma transactions fetch error:', err);
+      }
+    }
+    res.json([
+      { id: 'tx_mock_1', customerId: user.customerId || 'cust_1', warehouseId: 'wh_1', skuCode: 'TS-V-NA-4', type: 'RESERVE', direction: 'OUT', quantity: 1, beforeQty: 100, afterQty: 99, reason: 'Outbound reservation', createdAt: new Date() }
+    ]);
+  });
+
+  app.get('/api/inventory-reservations', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const where: any = {};
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          where.customerId = user.customerId;
+        }
+        const resvs = await prisma.inventoryReservation.findMany({ where, orderBy: { createdAt: 'desc' } });
+        return res.json(resvs);
+      } catch (err) {
+        console.error('Prisma reservations fetch error:', err);
+      }
+    }
+    res.json([
+      { id: 'res_mock_1', customerId: user.customerId || 'cust_1', orderId: 'ord_spec_1', skuCode: 'TS-V-NA-4', warehouseId: 'wh_1', quantity: 1, status: 'ACTIVE', createdAt: new Date() }
+    ]);
+  });
+
+  app.post('/api/inventory-adjustments', requireAuth, async (req: any, res) => {
+    const { skuId, warehouseId, adjustQty, type, reason } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const inv = await prisma.inventory.findFirst({
+          where: { skuId, warehouseId }
+        });
+        if (!inv) return res.status(404).json({ error: 'Inventory not found for specified SKU and warehouse' });
+        
+        const delta = type === 'SUBTRACT' ? -adjustQty : adjustQty;
+        const updated = await prisma.inventory.update({
+          where: { id: inv.id },
+          data: {
+            availableQty: Math.max(0, inv.availableQty + delta)
+          }
+        });
+        
+        await prisma.inventoryTransaction.create({
+          data: {
+            customerId: inv.customerId,
+            warehouseId,
+            skuId,
+            skuCode: inv.skuCode,
+            type: 'ADJUSTMENT',
+            direction: delta > 0 ? 'IN' : 'OUT',
+            quantity: Math.abs(delta),
+            beforeQty: inv.availableQty,
+            afterQty: Math.max(0, inv.availableQty + delta),
+            reason: reason || 'Manual Inventory Adjustment'
+          }
+        });
+        
+        return res.json({ status: 'success', inventory: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.json({ status: 'success', message: 'Manual Adjustment recorded (Mock)' });
+  });
+
+  // 3. Inbound APIs (InboundOrder, PutawayTask)
+  app.get('/api/inbound-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const where: any = {};
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          where.customerId = user.customerId;
+        }
+        const orders = await prisma.inboundOrder.findMany({
+          where,
+          include: { items: true, customer: true },
+          orderBy: { createdAt: 'desc' }
+        });
+        return res.json(orders);
+      } catch (err) {
+        console.error('Prisma inbound orders error:', err);
+      }
+    }
+    res.json([
+      { id: 'in_1', orderNo: 'ASN202607010001', customerId: user.customerId || 'cust_1', customerName: 'Yukon', status: 'PENDING', warehouseId: 'wh_1', remark: 'Inbound raw materials', createdAt: new Date() }
+    ]);
+  });
+
+  app.post('/api/inbound-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const { items = [], warehouseId = 'wh_1', remark = '-' } = req.body;
+    const customerId = user.customerId || req.body.customerId || 'cust_1';
+    
+    const orderNo = 'ASN' + String(Date.now()).substring(3, 15);
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newOrder = await prisma.inboundOrder.create({
+          data: {
+            orderNo,
+            customerId,
+            warehouseId,
+            remark,
+            status: 'PENDING',
+            items: {
+              create: items.map((i: any) => ({
+                skuId: i.skuId,
+                skuCode: i.skuCode,
+                qtyExpected: i.qtyExpected || 10,
+                qtyReceived: 0
+              }))
+            }
+          },
+          include: { items: true }
+        });
+        return res.status(201).json(newOrder);
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.status(201).json({ id: 'in_mock', orderNo, customerId, warehouseId, remark, status: 'PENDING' });
+  });
+
+  app.post('/api/inbound-orders/:id/receive', requireAuth, async (req: any, res) => {
+    const { receivedItems = [] } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.inboundOrder.findUnique({
+          where: { id: req.params.id },
+          include: { items: true }
+        });
+        if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        
+        await prisma.$transaction(async (tx) => {
+          for (const item of receivedItems) {
+            const orderItem = order.items.find(i => i.skuId === item.skuId);
+            if (orderItem) {
+              await tx.inboundOrderItem.update({
+                where: { id: orderItem.id },
+                data: { qtyReceived: (orderItem.qtyReceived || 0) + item.qtyReceived }
+              });
+              
+              const inv = await tx.inventory.findFirst({
+                where: { skuId: item.skuId, warehouseId: order.warehouseId }
+              });
+              if (inv) {
+                await tx.inventory.update({
+                  where: { id: inv.id },
+                  data: { availableQty: inv.availableQty + item.qtyReceived }
+                });
+                
+                await tx.inventoryTransaction.create({
+                  data: {
+                    customerId: order.customerId,
+                    warehouseId: order.warehouseId,
+                    skuId: item.skuId,
+                    skuCode: orderItem.skuCode,
+                    type: 'INBOUND_RECEIVED',
+                    direction: 'IN',
+                    quantity: item.qtyReceived,
+                    beforeQty: inv.availableQty,
+                    afterQty: inv.availableQty + item.qtyReceived,
+                    reason: `ASN ${order.orderNo} Received`
+                  }
+                });
+              }
+              
+              const paNo = 'PA' + String(Date.now()).substring(3, 15);
+              await tx.putawayTask.create({
+                data: {
+                  taskNo: paNo,
+                  inboundOrderId: order.id,
+                  skuId: item.skuId,
+                  skuCode: orderItem.skuCode,
+                  warehouseId: order.warehouseId,
+                  quantity: item.qtyReceived,
+                  status: 'PENDING'
+                }
+              });
+            }
+          }
+          
+          await tx.inboundOrder.update({
+            where: { id: order.id },
+            data: { status: 'RECEIVED' }
+          });
+        });
+        
+        return res.json({ status: 'success', message: 'Inbound shipment received and inventory updated' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.json({ status: 'success', message: 'Mock inbounding completed' });
+  });
+
+  app.get('/api/putaway-tasks', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const tasks = await prisma.putawayTask.findMany();
+        return res.json(tasks);
+      } catch (err) {
+        console.error('Prisma putaway tasks fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  app.post('/api/putaway-tasks/:id/complete', requireAuth, async (req: any, res) => {
+    const { locationId } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.putawayTask.update({
+          where: { id: req.params.id },
+          data: { status: 'COMPLETED', locationId }
+        });
+        return res.json({ status: 'success', message: 'Putaway completed successfully' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.json({ status: 'success', message: 'Putaway completed successfully (Mock)' });
+  });
+
+  // 4. Picking & Wave Task Execution
+  app.post('/api/waves/:id/generate-pick-tasks', requireAuth, async (req: any, res) => {
+    const waveId = req.params.id;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const wave = await prisma.wave.findUnique({
+          where: { id: waveId },
+          include: { orders: { include: { items: true } } }
+        });
+        if (!wave) return res.status(404).json({ error: 'Wave not found' });
+        
+        await prisma.$transaction(async (tx) => {
+          for (const order of wave.orders) {
+            for (const item of order.items) {
+              const pkNo = 'PK' + String(Date.now()).substring(3, 15);
+              await tx.pickTask.create({
+                data: {
+                  taskNo: pkNo,
+                  waveId,
+                  orderId: order.id,
+                  skuId: item.skuId,
+                  skuCode: item.skuCode,
+                  warehouseId: 'wh_1',
+                  quantity: item.qty,
+                  status: 'PENDING'
+                }
+              });
+            }
+          }
+          await tx.wave.update({
+            where: { id: waveId },
+            data: { status: 'PICKING' }
+          });
+        });
+        return res.json({ status: 'success', message: 'Pick tasks generated for wave' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.json({ status: 'success', message: 'Mock picking tasks generated' });
+  });
+
+  app.get('/api/pick-tasks', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const tasks = await prisma.pickTask.findMany();
+        return res.json(tasks);
+      } catch (err) {
+        console.error('Prisma pick tasks fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  app.post('/api/pick-tasks/:id/complete', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.pickTask.update({
+          where: { id: req.params.id },
+          data: { status: 'COMPLETED' }
+        });
+        return res.json({ status: 'success', message: 'Pick task completed' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.json({ status: 'success', message: 'Pick task completed (Mock)' });
+  });
+
+  app.get('/api/review-tasks', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const tasks = await prisma.reviewTask.findMany();
+        return res.json(tasks);
+      } catch (err) {
+        console.error('Prisma review tasks fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  app.post('/api/review-tasks/:id/complete', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.reviewTask.update({
+          where: { id: req.params.id },
+          data: { status: 'COMPLETED' }
+        });
+        return res.json({ status: 'success', message: 'Review task completed' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.json({ status: 'success', message: 'Review task completed (Mock)' });
+  });
+
+  app.post('/api/outbound-orders/:id/weigh-package', requireAuth, async (req: any, res) => {
+    const { weight, length, width, height } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const pkgNo = 'PKG' + String(Date.now()).substring(3, 15);
+        const pkg = await prisma.package.create({
+          data: {
+            packageNo: pkgNo,
+            orderId: req.params.id,
+            weight: parseFloat(weight || 0),
+            length: parseFloat(length || 0),
+            width: parseFloat(width || 0),
+            height: parseFloat(height || 0)
+          }
+        });
+        return res.status(201).json({ status: 'success', package: pkg });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.status(201).json({ status: 'success', message: 'Package weighed successfully (Mock)' });
+  });
+
+  // 5. Exceptions, Returns, Relabels & WorkOrders
+  app.get('/api/exception-cases', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const cases = await prisma.exceptionCase.findMany();
+        return res.json(cases);
+      } catch (err) {
+        console.error('Prisma exception cases fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  app.post('/api/exception-cases', requireAuth, async (req: any, res) => {
+    const { orderId, type, description } = req.body;
+    const caseNo = 'EXC' + String(Date.now()).substring(3, 15);
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const ec = await prisma.exceptionCase.create({
+          data: { caseNo, orderId, type, description, status: 'PENDING' }
+        });
+        return res.status(201).json(ec);
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    return res.status(201).json({ id: 'exc_mock', caseNo, orderId, type, description, status: 'PENDING' });
+  });
+
+  app.get('/api/return-orders', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const returns = await prisma.returnOrder.findMany({ include: { items: true } });
+        return res.json(returns);
+      } catch (err) {
+        console.error('Prisma return orders fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  app.get('/api/relabel-orders', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const orders = await prisma.relabelOrder.findMany();
+        return res.json(orders);
+      } catch (err) {
+        console.error('Prisma relabel orders fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  app.get('/api/work-orders', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const orders = await prisma.workOrder.findMany();
+        return res.json(orders);
+      } catch (err) {
+        console.error('Prisma work orders fetch error:', err);
+      }
+    }
+    res.json([]);
+  });
+
+  // 6. Billing Rules, Records & Invoices
+  app.get('/api/billing-rules', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const rules = await prisma.billingRule.findMany();
+        return res.json(rules);
+      } catch (err) {
+        console.error('Prisma billing rules fetch error:', err);
+      }
+    }
+    res.json([
+      { id: 'br_1', name: '出库单操作费 (Outbound Handling Fee)', code: 'OUTBOUND_FEE', type: 'OUTBOUND', rate: 2.5 },
+      { id: 'br_2', name: '仓储费 (Storage Fee/cbm/day)', code: 'STORAGE_FEE', type: 'STORAGE', rate: 0.1 },
+      { id: 'br_3', name: '入库理货费 (Inbound Sorting Fee)', code: 'INBOUND_FEE', type: 'INBOUND', rate: 1.5 }
+    ]);
+  });
+
+  app.get('/api/billing-records', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const where: any = {};
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          where.customerId = user.customerId;
+        }
+        const records = await prisma.billingRecord.findMany({ where });
+        return res.json(records);
+      } catch (err) {
+        console.error('Prisma billing records fetch error:', err);
+      }
+    }
+    res.json([
+      { id: 'br_rec_1', customerId: user.customerId || 'cust_1', orderId: 'ord_spec_1', type: 'OUTBOUND', amount: 2.5, currency: 'USD', status: 'UNPAID', createdAt: new Date() }
+    ]);
+  });
+
+  app.get('/api/invoices', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const where: any = {};
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          where.customerId = user.customerId;
+        }
+        const invoices = await prisma.invoice.findMany({ where });
+        return res.json(invoices);
+      } catch (err) {
+        console.error('Prisma invoices fetch error:', err);
+      }
+    }
+    res.json([]);
   });
 
   // ==========================================
