@@ -1,144 +1,291 @@
-# NiceC WMS 仓库管理系统全栈 MVP
- 
-本项目是一个高精度、企业级海外仓仓库管理系统（WMS）全栈 MVP，将原本的“出库页面原型”升级为真实可落地的生产全栈系统。系统统一命名为：**NiceC WMS** / **NC WMS**。
- 
+# NiceC WMS 仓库管理系统
+
+NiceC WMS 是一个面向海外仓业务的全栈仓库管理系统，采用 **React + TypeScript + Vite + Express + Prisma + PostgreSQL** 架构，支持出库一件代发、波次、库存预留、入库、上架、客户门户、管理员后台、反馈管理与 AI 助手等模块。
+
+> 当前分支目标：把演示型 MVP 升级为可部署、可检查、可继续扩展的生产级版本。
+
 ---
- 
-## 🏗️ 全栈系统架构与重大重构亮点
- 
-为了实现生产级的海外仓作业流程，本项目采用 **React + TypeScript + Vite + Express + Prisma + PostgreSQL** 架构，并完成了以下核心业务骨架和数据一致性的深层重构：
- 
-### 1. 全 Prisma 数据库事务（Atomic Transaction）支持
-*   **出库单与库存管理闭环**：出库单核心 API （创建、更新、取消、出库）全部改写为标准的 Prisma 数据库 `$transaction`，保证其强一致性。
-*   **原子化锁库 (Stock Reservation)**：当创建或修改出库单时，系统会在同一个事务中校验所有 SKU 的可用库存，并在事务内部锁定库存；如果其中任意一款 SKU 的库存不足，**整笔事务强制 Rollback**，彻底杜绝超卖或部分锁定造成的实物异常，并向客户端返回 `400` 错误。
-*   **数据库故障自动降级 (Fallback)**：核心 API 支持多运行态自动降级。如果检测到 PostgreSQL 连接不可达，系统会自动平滑降载至单体 JSON 数据库，确保离线或独立沙箱调试时的可用性。
- 
-### 2. 真实权限控制与多租户数据隔离
-引入了 `requireAuth`、`requireRole` 和 `requireCustomerAccess` 安全拦截器：
-*   **超级管理员 (Admin / Super Admin)**：拥有完整的客户元数据、商品SKU库、物理库存分布以及所有出库订单的管理、合并、审核、导出权限。
-*   **仓库操作员 (Operator)**：具备日常仓储出入库确认、拣货波次批量归集、包裹打单等仓储作业功能。
-*   **商户客户 (CLIENT / Client)**：登录后重定向进入专属 **Client Portal（客户门户）**。客户只能看到、检索、更新和创建属于该客户（CustomerId）的数据。对于 `GET /api/customers`、`GET /api/skus`、`GET /api/inventory`、`GET /api/outbound-orders` 等元数据与出库单，系统在底层自动应用租户 ID 过滤，防止 CLIENT 查看或越权篡改其他商户的数据，实现完全的客户多租户隔离。
- 
-### 3. 统一库存字段命名 (Unified Field Schema)
-根据真实 WMS 的库存控制最佳实践，前端 React 类型、后端 JSON 模型以及 Prisma 数据库字段已完成了彻底统一：
-*   **可用库存**：`availableQty`（正品）
-*   **锁定占用库存**：`reservedQty`（备货中/预留中）
-*   **破损次品库存**：`damagedQty`（次品/退货待处理）
-*   *完全废弃了 legacy `lockedQty`, `locationCode`, `zoneCode` 字段，杜绝二义性。*
- 
-### 4. 显式出库扣减 API
-*   **主动出库确认**：新增 `POST /api/outbound-orders/:id/ship` 主动作业接口，操作员确认后会将预留库存（`reservedQty`）直接扣减为 0，并将相应的预留状态消费为 `CONSUMED`，同时在底层生成 `SHIP` 类型、方向为 `OUT` 的 `inventoryTransaction` 历史审计日志。
- 
+
+## 生产级能力清单
+
+已加入或强化：
+
+- Docker 多阶段生产构建
+- Docker Compose + PostgreSQL 16
+- 非 root 容器运行用户
+- 容器 Healthcheck
+- 生产安全 entrypoint
+- `.env.example` 生产环境模板
+- GitHub Actions CI：类型检查、构建、Docker build
+- `npm run test:smoke` 核心冒烟测试
+- `npm run test:functions` 全功能端点检查
+- JWT 登录鉴权
+- 客户角色数据隔离
+- PostgreSQL 不可用时的 JSON fallback/mock 运行能力
+
+仍建议在正式上线前继续补强：
+
+- 正式 Prisma migration 流程，替代生产 `db push`
+- 完整 RBAC 权限矩阵
+- API rate limit / Helmet / audit trail 全覆盖
+- 对接真实承运商、店铺平台、对象存储
+- E2E 测试和备份恢复演练
+
 ---
- 
-## 🔑 默认演示账户与凭证 (含密码)
- 
-系统包含完善的 JWT 登录与密码 bcrypt 散列对比。预设演示账号如下：
- 
-| 角色 / 身份 | 登录账号 | 预设密码 | 登录行为与权限 |
-| :--- | :--- | :--- | :--- |
-| **超级管理员 (Admin)** | `neal@nicec.net` | `admin123` | 拥有全部出库、编辑、删除、波次合并及全局配置权限 |
-| **超级管理员 (Admin)** | `admin@nicec.net` | `admin123` | 备用最高权限账号 |
-| **仓库操作员 (Operator)** | `operator` | `operator123` | 基础仓储理货、复核、确认出库作业权限 |
-| **商户客户 (Client)** | `client@nicec.net` | `client123` | **重定向进入 Client Portal（客户门户）**，多租户强隔离，仅能看到和编辑自身客户ID绑定的出库订单与可用库存 |
- 
----
- 
-## 🚀 本地开发快速启动
- 
-### 1. 安装基础依赖
-在主工作区根目录下安装所有必要的 npm 包：
+
+## 本地开发
+
 ```bash
 npm install
+cp .env.example .env
+npm run dev
 ```
- 
-### 2. 启动全栈开发服务器
-运行以下命令，系统将在本地 **3000** 端口同时热加载启动 Express API 后端与 Vite React 前端：
+
+打开：
+
+```text
+http://localhost:3000
+```
+
+默认开发端口：`3000`
+
+---
+
+## 生产部署：Docker Compose
+
+### 1. 配置环境变量
+
+```bash
+cp .env.example .env
+```
+
+必须修改这些值：
+
+```env
+JWT_SECRET="replace-with-a-long-random-production-secret"
+POSTGRES_PASSWORD="replace-db-password"
+DATABASE_URL="postgresql://nicec_wms:replace-db-password@postgres:5432/nicec_wms?schema=public"
+ADMIN_PASSWORD="replace-admin-password"
+CLIENT_PASSWORD="replace-client-password"
+CORS_ORIGIN="https://your-domain.com"
+ALLOWED_ORIGINS="https://your-domain.com"
+```
+
+生成强密钥：
+
+```bash
+openssl rand -base64 48
+```
+
+### 2. 首次初始化数据库
+
+首次部署可以临时打开：
+
+```env
+RUN_DB_PUSH=true
+RUN_DB_SEED=true
+```
+
+然后启动：
+
+```bash
+docker compose up -d --build
+```
+
+初始化完成后，建议改回：
+
+```env
+RUN_DB_PUSH=false
+RUN_DB_SEED=false
+```
+
+再重启：
+
+```bash
+docker compose up -d
+```
+
+> 生产环境默认不自动执行 `db push --accept-data-loss`，避免意外破坏线上数据。
+
+### 3. 查看状态
+
+```bash
+docker compose ps
+docker compose logs -f wms-app
+```
+
+健康检查：
+
+```bash
+curl http://localhost:3000/api/health
+curl http://localhost:3000/api/health/db
+```
+
+---
+
+## Coolify 部署建议
+
+推荐选择 **Docker Compose** 部署方式。
+
+必须配置：
+
+- Build Pack：Docker Compose
+- Port：`3000`
+- Healthcheck URL：`/api/health`
+- Environment：使用 `.env.example` 中的变量，不要使用默认密码
+- Volume：保留 PostgreSQL volume `postgres_data`
+
+首次部署：
+
+```env
+RUN_DB_PUSH=true
+RUN_DB_SEED=true
+```
+
+稳定后改成：
+
+```env
+RUN_DB_PUSH=false
+RUN_DB_SEED=false
+```
+
+---
+
+## 测试与生产检查
+
+先启动服务：
+
 ```bash
 npm run dev
 ```
-打开浏览器访问 [http://localhost:3000](http://localhost:3000) 即可使用。
- 
----
- 
-## 🐳 生产级容器化部署 (Docker Compose)
- 
-本项目内置了完整的容器化编排文件。它将拉取 PostgreSQL 数据库，自动运行数据挂载、Prisma 结构初始化并挂载 WMS 镜像。
- 
-### 1. 启动服务集群
-```bash
-docker-compose up -d --build
-```
- 
-### 2. 数据库自愈与自动迁移
-WMS 镜像采用 `entrypoint.sh` 脚本作为运行入口。容器启动后会自动串联执行以下过程：
-- **Prisma Generate**：动态编译并生成最新的 TypeScript Prisma 客户端。
-- **Prisma Db Push**：将 `schema.prisma` 结构同步推送至 PostgreSQL 数据库（自愈模式）。
-- **Prisma Db Seed**：自动填充基础组织结构、用户权限及 SKU 初始主数据。
-- 启动生产环境编译出的全栈 CJS 后端：`node dist/server.cjs`。
 
----
- 
-## 🧪 自动化冒烟测试 (Automated Smoke Test)
+另开终端执行：
 
-系统包含一套一键化自动冒烟测试用例，覆盖了从认证到锁库、冲销、永久出库、安全审计的完整生命周期核心流程：
-
-### 运行测试
-请在 Express 启动（`npm run dev` 且 3000 端口已就绪）的状态下执行以下命令：
 ```bash
 npm run test:smoke
+npm run test:functions
 ```
 
-测试将自动依次验证：
-1. **Admin JWT 认证**。
-2. **多租户权限拦截与资源可用度拉取**。
-3. **出库创建原子锁库 (Stock Reservation)**。
-4. **出库单整笔取消与回滚冲销 (Stock Release)**。
-5. **包裹面单打印与手动扣减永久扣库 (Stock Ship Deduction)**。
-6. **WMS AI Assistant Fallback 问答回复**。
+`test:smoke` 检查核心链路：
 
-所有用例在事务一致、多端鉴权拦截正确的状态下自动输出 `100% GREEN`。
+- 健康检查
+- 登录鉴权
+- 客户数据隔离
+- 库存接口
+- CLIENT 波次权限拦截
+- AI 助手 fallback
+
+`test:functions` 检查主要端点：
+
+- Auth
+- Customers
+- Carriers
+- Logistics Channels
+- Products
+- SKUs
+- Warehouses
+- Inventory
+- Outbound Orders
+- Waves
+- Dashboard
+- Operation Logs
+- AI Assistant
+- Feedback
+- Users
+- Billing Rules
 
 ---
- 
-## 📊 后端 REST API 接口文档
- 
-后端运行于 `port:3000`，提供以下标准的 REST API 路由：
- 
-### 1. 登录认证 (JWT Auth)
-*   `POST /api/auth/login`
-    *   **Payload**: `{ "username": "neal@nicec.net", "password": "admin123" }`
- 
-### 2. 出库单核心管理 (Outbound Orders CRUD)
-*   `GET /api/outbound-orders`：多维检索出库列表（超级管理员显示全部，Client 用户强制按 CustomerId 隔离，支持根据状态页签汇总计数的动态过滤）
-*   `GET /api/outbound-orders/:id`：获取出库订单详情（带客户、渠道、承运商关联，Client 用户做越权拦截）
-*   `POST /api/outbound-orders`：创建新的一件代发出库单（包含原子性库存预留事务，库存不足回滚）
-*   `PUT /api/outbound-orders/:id`：更新出库单详情（包含包裹及物品行数据，修改订单项时自动冲销原锁定并重新进行可用库存校验）
-*   `DELETE /api/outbound-orders/:id`：物理删除出库单并清空明细
-*   `POST /api/outbound-orders/:id/cancel`：取消出库单，回滚并释放已锁定的预留库存 (`reservedQty` 还原回 `availableQty`，状态恢复为 `RELEASED`)
-*   `POST /api/outbound-orders/:id/ship`：操作员手动点击“确认出库”，触发实物扣减（`reservedQty` 扣减，记录流水账并结转为 `CONSUMED`）
- 
-### 3. 波次处理与归集
-*   `POST /api/outbound-orders/batch-generate-wave`
-    *   **Payload**: `{ "orderIds": ["ord_1", "ord_2"] }`：合并多个订单为同一拣货波次并自动分配波次流水号 `WVxxxxxx`
- 
-### 4. 隔离的基础元数据 API (按 CLIENT 自动隔离)
-*   `GET /api/customers`：超级管理员显示全部商户，Client 仅显示自身商户档案
-*   `GET /api/skus`：商品 SKU 元数据库，Client 仅显示自身托管产品
-*   `GET /api/inventory`：实物库存状况，Client 仅查看自身可用与锁定数量
-*   `GET /api/carriers`：承运商列表
-*   `GET /api/logistics-channels`：物流渠道列表
- 
+
+## 常用账号
+
+开发/演示种子账号：
+
+| 角色 | 登录账号 | 默认密码 | 说明 |
+| --- | --- | --- | --- |
+| Admin | `admin@nicec.net` | `admin123` | 管理后台账号 |
+| Admin | `neal@nicec.net` | `admin123` | 项目负责人账号 |
+| Operator | `operator` | `operator123` | 仓库操作员 |
+| Client | `client@nicec.net` | `client123` | 客户门户账号 |
+
+正式生产必须通过 `.env` 或数据库种子脚本修改默认密码。
+
 ---
- 
-## 🎨 页面复刻亮点及功能特性
- 
-1.  **极高逼真度企业级 UI**：
-    *   左侧导航 `#071225` 配合出库高亮、右侧展开指示。
-    *   顶部 Header `#062B66` 深蓝色企业质感，包含完整的 nc-NO.1 仓库选择器、通知铃、用户状态。
-    *   内置全部 `待处理`、`待拣货`、`待复核`、`已出库` 真实数量。
-2.  **出库一件代发核心流**：
-    *   **新建出库单**：支持选择绑定多款 SKU，可灵活添加多条产品并设置数量。
-    *   **详情透视**：支持在表格中点击 OBS 编号一键拉起侧弹窗，极速展示当前物流追踪状态及分拨包裹明细。
-    *   **生成波次**：勾选多条订单后，点击蓝色的“生成波次”，系统将对该组订单合规分配并生成波次。
-    *   **快速更新**：可在表格行中进行多状态手动快捷更改（如更新面单是否已打印状态）。
+
+## 主要 API
+
+### Auth
+
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+
+### Outbound
+
+- `GET /api/outbound-orders`
+- `GET /api/outbound-orders/:id`
+- `POST /api/outbound-orders`
+- `PUT /api/outbound-orders/:id`
+- `DELETE /api/outbound-orders/:id`
+- `POST /api/outbound-orders/:id/cancel`
+- `POST /api/outbound-orders/:id/ship`
+- `POST /api/outbound-orders/batch-generate-wave`
+
+### Master Data
+
+- `GET /api/customers`
+- `GET /api/products`
+- `GET /api/skus`
+- `GET /api/carriers`
+- `GET /api/logistics-channels`
+- `GET /api/warehouses`
+
+### Inventory
+
+- `GET /api/inventory`
+- `GET /api/inventory/:id`
+- `POST /api/inventory/adjust`
+- `POST /api/inventory/transfer`
+- `GET /api/inventory-transactions`
+- `GET /api/inventory-reservations`
+
+### Admin
+
+- `GET /api/users`
+- `POST /api/users`
+- `PUT /api/users/:id`
+- `POST /api/users/:id/reset-password`
+- `DELETE /api/users/:id`
+- `GET /api/billing-rules`
+- `POST /api/billing-rules`
+- `PUT /api/billing-rules/:id`
+- `DELETE /api/billing-rules/:id`
+- `GET /api/feedback`
+
+---
+
+## 数据安全建议
+
+上线前必须完成：
+
+1. 替换所有默认密码和密钥。
+2. 使用独立 PostgreSQL volume 或托管数据库。
+3. 定期备份数据库。
+4. 不要把 `.env` 提交到 Git。
+5. 生产环境默认保持 `RUN_DB_PUSH=false`。
+6. 将域名接入 HTTPS 反代，例如 Coolify/Traefik/Cloudflare。
+
+---
+
+## 回滚
+
+Docker Compose 回滚：
+
+```bash
+git checkout <last-good-commit>
+docker compose up -d --build
+```
+
+GitHub 分支回滚：
+
+```bash
+git revert <commit-sha>
+```
