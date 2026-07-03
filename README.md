@@ -70,16 +70,35 @@ npm run dev
 docker-compose up -d --build
 ```
  
-### 2. 数据库迁移与初始化 (Prisma Migration & Seed)
-在容器或宿主机运行 Prisma Migrate 进行表结构初始化：
+### 2. 数据库自愈与自动迁移
+WMS 镜像采用 `entrypoint.sh` 脚本作为运行入口。容器启动后会自动串联执行以下过程：
+- **Prisma Generate**：动态编译并生成最新的 TypeScript Prisma 客户端。
+- **Prisma Db Push**：将 `schema.prisma` 结构同步推送至 PostgreSQL 数据库（自愈模式）。
+- **Prisma Db Seed**：自动填充基础组织结构、用户权限及 SKU 初始主数据。
+- 启动生产环境编译出的全栈 CJS 后端：`node dist/server.cjs`。
+
+---
+ 
+## 🧪 自动化冒烟测试 (Automated Smoke Test)
+
+系统包含一套一键化自动冒烟测试用例，覆盖了从认证到锁库、冲销、永久出库、安全审计的完整生命周期核心流程：
+
+### 运行测试
+请在 Express 启动（`npm run dev` 且 3000 端口已就绪）的状态下执行以下命令：
 ```bash
-# 生成 Prisma 客户端
-npx prisma generate
- 
-# 推送并执行 PostgreSQL 数据库迁移
-npx prisma db push
+npm run test:smoke
 ```
- 
+
+测试将自动依次验证：
+1. **Admin JWT 认证**。
+2. **多租户权限拦截与资源可用度拉取**。
+3. **出库创建原子锁库 (Stock Reservation)**。
+4. **出库单整笔取消与回滚冲销 (Stock Release)**。
+5. **包裹面单打印与手动扣减永久扣库 (Stock Ship Deduction)**。
+6. **WMS AI Assistant Fallback 问答回复**。
+
+所有用例在事务一致、多端鉴权拦截正确的状态下自动输出 `100% GREEN`。
+
 ---
  
 ## 📊 后端 REST API 接口文档

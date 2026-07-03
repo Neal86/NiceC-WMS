@@ -4,18 +4,18 @@ services:
   # Database Service (PostgreSQL)
   db:
     image: postgres:15-alpine
-    container_name: wms-postgres-db
+    container_name: nicec-wms-postgres
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: WmsSecurePassword123!
-      POSTGRES_DB: linkstar_wms
+      POSTGRES_USER: nicec
+      POSTGRES_PASSWORD: nicec_password
+      POSTGRES_DB: nicec_wms
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U nicec"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -25,14 +25,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: linkstar-wms-app
+    container_name: nicec-wms-app
     restart: always
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:WmsSecurePassword123!@db:5432/linkstar_wms?schema=public
-      - JWT_SECRET=LinkstarWmsSecretToken2026Key!
+      - DATABASE_URL=postgresql://nicec:nicec_password@db:5432/nicec_wms?schema=public
+      - JWT_SECRET=change-this-secret-in-production
       - PORT=3000
     depends_on:
       db:

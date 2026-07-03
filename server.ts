@@ -400,29 +400,40 @@ async function startServer() {
     res.json(db.customers);
   });
 
-  app.get('/api/carriers', (req, res) => {
+  app.get('/api/carriers', requireAuth, (req: any, res) => {
     const db = getDB();
     res.json(db.carriers);
   });
 
-  app.get('/api/logistics-channels', (req, res) => {
+  app.get('/api/logistics-channels', requireAuth, (req: any, res) => {
     const db = getDB();
     res.json(db.logisticsChannels);
   });
 
-  app.get('/api/products', (req, res) => {
+  app.get('/api/products', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        let prods = [];
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          prods = await prisma.product.findMany({ where: { customerId: user.customerId } });
+        } else {
+          prods = await prisma.product.findMany();
+        }
+        return res.json(prods);
+      } catch (err) {
+        console.error('Prisma products list error:', err);
+      }
+    }
+
     const db = getDB();
-    // Return mock products based on order items
-    const products = db.outboundOrderItems.map(item => ({
-      id: item.skuId,
-      sku: item.skuCode,
-      barcode: item.skuBarcode,
-      name: item.productName,
-      category: item.category
-    }));
-    // deduplicate
-    const uniqueProducts = Array.from(new Map(products.map(p => [p.id, p])).values());
-    res.json(uniqueProducts);
+    let prods = db.products || [];
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      prods = prods.filter(p => p.customerId === user.customerId);
+    }
+    res.json(prods);
   });
 
   // ==========================================
@@ -1105,6 +1116,10 @@ async function startServer() {
           }
         }
 
+        if (order.status === 'SHIPPED' && updateData.items) {
+          return res.status(400).json({ error: '已出库订单无法修改商品列表' });
+        }
+
         // Prepare fields for update
         const dataToUpdate: any = {};
         if (updateData.status) dataToUpdate.status = updateData.status;
@@ -1200,45 +1215,6 @@ async function startServer() {
             include: { items: true }
           });
 
-          // Stock deduction when status changes to SHIPPED
-          if (dataToUpdate.status === 'SHIPPED' && order.status !== 'SHIPPED') {
-            const reservations = await tx.inventoryReservation.findMany({
-              where: { orderId: order.id, status: 'ACTIVE' }
-            });
-            for (const resv of reservations) {
-              const inv = await tx.inventory.findFirst({
-                where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
-              });
-              if (inv) {
-                await tx.inventory.update({
-                  where: { id: inv.id },
-                  data: {
-                    reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
-                  }
-                });
-              }
-              await tx.inventoryReservation.update({
-                where: { id: resv.id },
-                data: { status: 'CONSUMED' }
-              });
-              
-              await tx.inventoryTransaction.create({
-                data: {
-                  customerId: resv.customerId,
-                  warehouseId: resv.warehouseId,
-                  skuId: resv.skuId,
-                  skuCode: resv.skuCode,
-                  type: 'SHIP',
-                  direction: 'OUT',
-                  quantity: resv.quantity,
-                  beforeQty: inv ? inv.availableQty + inv.reservedQty : 0,
-                  afterQty: inv ? inv.availableQty + inv.reservedQty - resv.quantity : 0,
-                  reason: `Outbound Order ${order.id} Shipped via Status Update`
-                }
-              });
-            }
-          }
-
           return resOrder;
         });
 
@@ -1265,6 +1241,10 @@ async function startServer() {
       if (currentOrder.customerId !== user.customerId) {
         return res.status(403).json({ error: 'Forbidden. Access denied.' });
       }
+    }
+
+    if (currentOrder.status === 'SHIPPED' && updateData.items) {
+      return res.status(400).json({ error: '已出库订单无法修改商品列表' });
     }
 
     const updatedOrder: OutboundOrder = {
@@ -1327,10 +1307,6 @@ async function startServer() {
       updatedOrder.totalWeight = parseFloat((updatedOrder.totalQty * 1.2).toFixed(2));
     }
 
-    if (updatedOrder.status === 'SHIPPED' && currentOrder.status !== 'SHIPPED') {
-      await deductStock(currentOrder.id);
-    }
-
     db.outboundOrders[index] = updatedOrder;
     saveDB();
 
@@ -1341,28 +1317,199 @@ async function startServer() {
   });
 
   // DELETE /api/outbound-orders/:id
-  app.delete('/api/outbound-orders/:id', (req, res) => {
-    const db = getDB();
-    const orderExists = db.outboundOrders.some(o => o.id === req.params.id);
+  app.delete('/api/outbound-orders/:id', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const hasDb = await checkDbConnection();
+    
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({
+          where: { id: req.params.id },
+          include: { items: true }
+        });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    if (!orderExists) {
-      return res.status(404).json({ error: 'Order not found' });
+        if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+          if (order.customerId !== user.customerId) {
+            return res.status(403).json({ error: 'Forbidden. Access denied.' });
+          }
+        }
+
+        if (order.status === 'SHIPPED') {
+          return res.status(400).json({ error: '已出库订单无法删除/取消' });
+        }
+
+        const updated = await prisma.$transaction(async (tx) => {
+          // Release stock reservations
+          const reservations = await tx.inventoryReservation.findMany({
+            where: { orderId: order.id, status: 'ACTIVE' }
+          });
+          for (const resv of reservations) {
+            const inv = await tx.inventory.findFirst({
+              where: { skuId: resv.skuId, warehouseId: resv.warehouseId }
+            });
+            if (inv) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  availableQty: inv.availableQty + resv.quantity,
+                  reservedQty: Math.max(0, inv.reservedQty - resv.quantity)
+                }
+              });
+            }
+            await tx.inventoryReservation.update({
+              where: { id: resv.id },
+              data: { status: 'RELEASED', releasedAt: new Date() }
+            });
+            
+            await tx.inventoryTransaction.create({
+              data: {
+                customerId: resv.customerId,
+                warehouseId: resv.warehouseId,
+                skuId: resv.skuId,
+                skuCode: resv.skuCode,
+                type: 'RELEASE',
+                direction: 'IN',
+                quantity: resv.quantity,
+                beforeQty: inv ? inv.availableQty : 0,
+                afterQty: inv ? inv.availableQty + resv.quantity : 0,
+                reason: `Outbound Order ${order.id} Soft Deleted (Cancelled)`
+              }
+            });
+          }
+
+          return await tx.outboundOrder.update({
+            where: { id: order.id },
+            data: { status: 'CANCELLED' }
+          });
+        });
+
+        return res.json({
+          status: 'success',
+          message: 'Order soft deleted (cancelled) successfully',
+          order: updated
+        });
+      } catch (err: any) {
+        console.error('Delete/Cancel order error:', err);
+        return res.status(400).json({ error: err.message || 'Delete/Cancel failed.' });
+      }
     }
 
-    db.outboundOrders = db.outboundOrders.filter(o => o.id !== req.params.id);
-    db.outboundOrderItems = db.outboundOrderItems.filter(item => item.orderId !== req.params.id);
+    // JSON fallback
+    const db = getDB();
+    const ord = db.outboundOrders.find(o => o.id === req.params.id);
+    if (!ord) return res.status(404).json({ error: 'Order not found' });
+    
+    if (user && (user.role === 'CLIENT' || user.role === 'Client' || user.role === 'customer' || user.role === 'CUSTOMER')) {
+      if (ord.customerId !== user.customerId) {
+        return res.status(403).json({ error: 'Forbidden. Access denied.' });
+      }
+    }
+
+    if (ord.status === 'SHIPPED') {
+      return res.status(400).json({ error: '已出库订单无法删除/取消' });
+    }
+    
+    // Release inventory reservation
+    await releaseStock(ord.id);
+    ord.status = 'CANCELLED';
     saveDB();
 
-    res.json({ status: 'success', message: 'Order deleted successfully' });
+    res.json({
+      status: 'success',
+      message: 'Order soft deleted (cancelled) successfully',
+      order: ord
+    });
   });
 
   // POST /api/outbound-orders/batch-generate-wave
-  app.post('/api/outbound-orders/batch-generate-wave', (req, res) => {
-    const db = getDB();
-    const { orderIds } = req.body;
+  app.post('/api/outbound-orders/batch-generate-wave', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const role = (user.role || '').toUpperCase();
+    if (role === 'CLIENT' || role === 'CUSTOMER') {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role is not permitted to generate waves.' });
+    }
 
+    const { orderIds } = req.body;
     if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ error: 'No order IDs provided' });
+    }
+
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const orders = await prisma.outboundOrder.findMany({
+          where: { id: { in: orderIds } }
+        });
+
+        const invalidOrders = orders.filter(o => 
+          ['CANCELLED', 'SHIPPED', 'CANCEL', 'SHIP'].includes((o.status || '').toUpperCase())
+        );
+
+        if (invalidOrders.length > 0) {
+          return res.status(400).json({
+            error: `已取消或已出库的订单禁止生成波次: ${invalidOrders.map(o => o.orderNo).join(', ')}`
+          });
+        }
+
+        const count = await prisma.wave.count();
+        const waveNo = 'WV' + new Date().toISOString().slice(0,10).replace(/-/g, '') + '000' + (count + 1);
+
+        // Run as transaction
+        const result = await prisma.$transaction(async (tx) => {
+          const wave = await tx.wave.create({
+            data: {
+              waveNo,
+              status: 'PICKING',
+              orderCount: orderIds.length
+            }
+          });
+
+          await tx.outboundOrder.updateMany({
+            where: { id: { in: orderIds } },
+            data: {
+              waveId: wave.id,
+              status: 'PICKING'
+            }
+          });
+
+          await tx.operationLog.create({
+            data: {
+              userId: user.id || 'usr_1',
+              username: user.username || user.email || 'system',
+              action: `生成波次: ${waveNo}`,
+              details: `成功生成波次 ${waveNo}, 包含 ${orderIds.length} 个订单`
+            }
+          });
+
+          return wave;
+        });
+
+        return res.json({
+          status: 'success',
+          message: `波次号 ${result.waveNo} 创建成功，成功归集 ${orderIds.length} 个出库单。`,
+          wave: result
+        });
+
+      } catch (err: any) {
+        console.error('Prisma batch wave error:', err);
+        return res.status(500).json({ error: 'PostgreSQL error: ' + err.message });
+      }
+    }
+
+    // JSON fallback
+    const db = getDB();
+    const orders = db.outboundOrders.filter(o => orderIds.includes(o.id));
+    const invalidOrders = orders.filter(o => 
+      ['CANCELLED', 'SHIPPED', 'CANCEL', 'SHIP'].includes((o.status || '').toUpperCase())
+    );
+
+    if (invalidOrders.length > 0) {
+      return res.status(400).json({
+        error: `已取消或已出库的订单禁止生成波次: ${invalidOrders.map(o => o.orderNo).join(', ')}`
+      });
     }
 
     // Create a wave
@@ -1370,12 +1517,11 @@ async function startServer() {
     const newWave: Wave = {
       id: 'wave_' + Math.random().toString(36).substr(2, 9),
       waveNo,
-      status: 'PENDING',
+      status: 'PICKING',
       orderCount: orderIds.length,
       createdTime: new Date().toISOString().replace('T', ' ').substring(0, 19)
     };
 
-    // Update outbound orders to reference this wave and transition to PICKING status
     db.outboundOrders = db.outboundOrders.map(ord => {
       if (orderIds.includes(ord.id)) {
         return {
@@ -1392,8 +1538,8 @@ async function startServer() {
     // Log operation
     db.operationLogs.push({
       id: 'log_' + Math.random().toString(36).substr(2, 9),
-      userId: 'usr_1',
-      username: 'neal@nicec.net',
+      userId: user.id || 'usr_1',
+      username: user.username || user.email || 'system',
       module: '波次归集',
       action: '生成波次',
       targetId: newWave.id,
@@ -1680,12 +1826,38 @@ async function startServer() {
   // ==========================================
   // Waves API
   // ==========================================
-  app.get('/api/waves', (req, res) => {
+  app.get('/api/waves', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const waves = await prisma.wave.findMany({
+          orderBy: { createdTime: 'desc' }
+        });
+        return res.json(waves);
+      } catch (err) {
+        console.error('Prisma waves list error:', err);
+      }
+    }
     const db = getDB();
     res.json(db.waves);
   });
 
-  app.get('/api/waves/:id', (req, res) => {
+  app.get('/api/waves/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const wave = await prisma.wave.findUnique({
+          where: { id: req.params.id },
+          include: { orders: true }
+        });
+        if (!wave) return res.status(404).json({ error: 'Wave not found' });
+        return res.json(wave);
+      } catch (err) {
+        console.error('Prisma wave fetch error:', err);
+      }
+    }
     const db = getDB();
     const wave = db.waves.find(w => w.id === req.params.id);
     if (!wave) return res.status(404).json({ error: 'Wave not found' });
@@ -1693,7 +1865,25 @@ async function startServer() {
     res.json({ ...wave, orders: waveOrders });
   });
 
-  app.post('/api/waves', (req, res) => {
+  app.post('/api/waves', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const count = await prisma.wave.count();
+        const waveNo = 'WV' + new Date().toISOString().slice(0,10).replace(/-/g, '') + '000' + (count + 1);
+        const newWave = await prisma.wave.create({
+          data: {
+            waveNo,
+            status: 'PENDING',
+            orderCount: 0
+          }
+        });
+        return res.status(201).json({ status: 'success', wave: newWave });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const waveNo = 'WV' + new Date().toISOString().slice(0,10).replace(/-/g, '') + '000' + (db.waves.length + 1);
     const newWave: Wave = {
@@ -1705,10 +1895,26 @@ async function startServer() {
     };
     db.waves.push(newWave);
     saveDB();
-    res.json({ status: 'success', wave: newWave });
+    res.status(201).json({ status: 'success', wave: newWave });
   });
 
-  app.put('/api/waves/:id', (req, res) => {
+  app.put('/api/waves/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.wave.update({
+          where: { id: req.params.id },
+          data: {
+            status: req.body.status,
+            orderCount: req.body.orderCount !== undefined ? parseInt(req.body.orderCount) : undefined
+          }
+        });
+        return res.json({ status: 'success', wave: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.waves.findIndex(w => w.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Wave not found' });
@@ -1717,7 +1923,17 @@ async function startServer() {
     res.json({ status: 'success', wave: db.waves[index] });
   });
 
-  app.delete('/api/waves/:id', (req, res) => {
+  app.delete('/api/waves/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.wave.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: '波次关闭/删除成功' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.waves = db.waves.filter(w => w.id !== req.params.id);
     db.outboundOrders = db.outboundOrders.map(o => o.waveId === req.params.id ? { ...o, waveId: null } : o);
@@ -1747,7 +1963,24 @@ async function startServer() {
     res.json(cust);
   });
 
-  app.post('/api/customers', (req, res) => {
+  app.post('/api/customers', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newCust = await prisma.customer.create({
+          data: {
+            name: req.body.name,
+            code: req.body.code,
+            contact: req.body.contactName || req.body.contact || '-',
+            email: req.body.email || '-'
+          }
+        });
+        return res.status(201).json({ status: 'success', customer: newCust });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const newCust = {
       id: 'cust_' + Math.random().toString(36).substr(2, 9),
@@ -1755,10 +1988,28 @@ async function startServer() {
     };
     db.customers.push(newCust);
     saveDB();
-    res.json({ status: 'success', customer: newCust });
+    res.status(201).json({ status: 'success', customer: newCust });
   });
 
-  app.put('/api/customers/:id', (req, res) => {
+  app.put('/api/customers/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.customer.update({
+          where: { id: req.params.id },
+          data: {
+            name: req.body.name,
+            code: req.body.code,
+            contact: req.body.contactName !== undefined ? req.body.contactName : req.body.contact,
+            email: req.body.email
+          }
+        });
+        return res.json({ status: 'success', customer: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.customers.findIndex(c => c.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Customer not found' });
@@ -1767,7 +2018,17 @@ async function startServer() {
     res.json({ status: 'success', customer: db.customers[index] });
   });
 
-  app.delete('/api/customers/:id', (req, res) => {
+  app.delete('/api/customers/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.customer.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'Customer deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.customers = db.customers.filter(c => c.id !== req.params.id);
     saveDB();
@@ -1777,14 +2038,45 @@ async function startServer() {
   // ==========================================
   // Products API (CRUD)
   // ==========================================
-  app.get('/api/products/:id', (req, res) => {
+  app.get('/api/products/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const prod = await prisma.product.findUnique({ where: { id: req.params.id } });
+        if (!prod) return res.status(404).json({ error: 'Product not found' });
+        return res.json(prod);
+      } catch (err) {
+        console.error('Prisma product fetch error:', err);
+      }
+    }
     const db = getDB();
     const prod = db.products.find(p => p.id === req.params.id);
     if (!prod) return res.status(404).json({ error: 'Product not found' });
     res.json(prod);
   });
 
-  app.post('/api/products', (req, res) => {
+  app.post('/api/products', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newProd = await prisma.product.create({
+          data: {
+            name: req.body.name,
+            sku: req.body.sku,
+            barcode: req.body.barcode || null,
+            category: req.body.category || null,
+            weight: parseFloat(req.body.weight || 0),
+            volume: parseFloat(req.body.volume || 0),
+            customerId: req.body.customerId || 'cust_1'
+          }
+        });
+        return res.status(201).json({ status: 'success', product: newProd });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const newProd = {
       id: 'prod_' + Math.random().toString(36).substr(2, 9),
@@ -1795,10 +2087,31 @@ async function startServer() {
     };
     db.products.push(newProd);
     saveDB();
-    res.json({ status: 'success', product: newProd });
+    res.status(201).json({ status: 'success', product: newProd });
   });
 
-  app.put('/api/products/:id', (req, res) => {
+  app.put('/api/products/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.product.update({
+          where: { id: req.params.id },
+          data: {
+            name: req.body.name,
+            sku: req.body.sku,
+            barcode: req.body.barcode,
+            category: req.body.category,
+            weight: req.body.weight !== undefined ? parseFloat(req.body.weight) : undefined,
+            volume: req.body.volume !== undefined ? parseFloat(req.body.volume) : undefined,
+            customerId: req.body.customerId
+          }
+        });
+        return res.json({ status: 'success', product: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.products.findIndex(p => p.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Product not found' });
@@ -1807,7 +2120,17 @@ async function startServer() {
     res.json({ status: 'success', product: db.products[index] });
   });
 
-  app.delete('/api/products/:id', (req, res) => {
+  app.delete('/api/products/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.product.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'Product deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.products = db.products.filter(p => p.id !== req.params.id);
     saveDB();
@@ -1873,7 +2196,25 @@ async function startServer() {
     res.json(sku);
   });
 
-  app.post('/api/skus', (req, res) => {
+  app.post('/api/skus', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newSku = await prisma.sKU.create({
+          data: {
+            code: req.body.code,
+            name: req.body.name,
+            barcode: req.body.barcode || '-',
+            weight: parseFloat(req.body.weight || 0),
+            customerId: req.body.customerId || 'cust_1'
+          }
+        });
+        return res.status(201).json({ status: 'success', sku: newSku });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const newSku = {
       id: 'sku_' + Math.random().toString(36).substr(2, 9),
@@ -1881,10 +2222,29 @@ async function startServer() {
     };
     db.skus.push(newSku);
     saveDB();
-    res.json({ status: 'success', sku: newSku });
+    res.status(201).json({ status: 'success', sku: newSku });
   });
 
-  app.put('/api/skus/:id', (req, res) => {
+  app.put('/api/skus/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.sKU.update({
+          where: { id: req.params.id },
+          data: {
+            code: req.body.code,
+            name: req.body.name,
+            barcode: req.body.barcode,
+            weight: req.body.weight !== undefined ? parseFloat(req.body.weight) : undefined,
+            customerId: req.body.customerId
+          }
+        });
+        return res.json({ status: 'success', sku: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.skus.findIndex(s => s.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'SKU not found' });
@@ -1893,7 +2253,17 @@ async function startServer() {
     res.json({ status: 'success', sku: db.skus[index] });
   });
 
-  app.delete('/api/skus/:id', (req, res) => {
+  app.delete('/api/skus/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.sKU.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'SKU deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.skus = db.skus.filter(s => s.id !== req.params.id);
     saveDB();
@@ -1903,7 +2273,22 @@ async function startServer() {
   // ==========================================
   // Carriers API (CRUD)
   // ==========================================
-  app.post('/api/carriers', (req, res) => {
+  app.post('/api/carriers', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newCarr = await prisma.carrier.create({
+          data: {
+            name: req.body.name,
+            code: req.body.code
+          }
+        });
+        return res.status(201).json({ status: 'success', carrier: newCarr });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const newCarr = {
       id: 'carr_' + Math.random().toString(36).substr(2, 9),
@@ -1911,10 +2296,26 @@ async function startServer() {
     };
     db.carriers.push(newCarr);
     saveDB();
-    res.json({ status: 'success', carrier: newCarr });
+    res.status(201).json({ status: 'success', carrier: newCarr });
   });
 
-  app.put('/api/carriers/:id', (req, res) => {
+  app.put('/api/carriers/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.carrier.update({
+          where: { id: req.params.id },
+          data: {
+            name: req.body.name,
+            code: req.body.code
+          }
+        });
+        return res.json({ status: 'success', carrier: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.carriers.findIndex(c => c.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Carrier not found' });
@@ -1923,7 +2324,17 @@ async function startServer() {
     res.json({ status: 'success', carrier: db.carriers[index] });
   });
 
-  app.delete('/api/carriers/:id', (req, res) => {
+  app.delete('/api/carriers/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.carrier.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'Carrier deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.carriers = db.carriers.filter(c => c.id !== req.params.id);
     saveDB();
@@ -1933,7 +2344,23 @@ async function startServer() {
   // ==========================================
   // Logistics Channels API (CRUD)
   // ==========================================
-  app.post('/api/logistics-channels', (req, res) => {
+  app.post('/api/logistics-channels', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newChan = await prisma.logisticsChannel.create({
+          data: {
+            name: req.body.name,
+            code: req.body.code,
+            carrierId: req.body.carrierId
+          }
+        });
+        return res.status(201).json({ status: 'success', channel: newChan });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const newChan = {
       id: 'chan_' + Math.random().toString(36).substr(2, 9),
@@ -1941,10 +2368,27 @@ async function startServer() {
     };
     db.logisticsChannels.push(newChan);
     saveDB();
-    res.json({ status: 'success', channel: newChan });
+    res.status(201).json({ status: 'success', channel: newChan });
   });
 
-  app.put('/api/logistics-channels/:id', (req, res) => {
+  app.put('/api/logistics-channels/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.logisticsChannel.update({
+          where: { id: req.params.id },
+          data: {
+            name: req.body.name,
+            code: req.body.code,
+            carrierId: req.body.carrierId
+          }
+        });
+        return res.json({ status: 'success', channel: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.logisticsChannels.findIndex(l => l.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Channel not found' });
@@ -1953,7 +2397,17 @@ async function startServer() {
     res.json({ status: 'success', channel: db.logisticsChannels[index] });
   });
 
-  app.delete('/api/logistics-channels/:id', (req, res) => {
+  app.delete('/api/logistics-channels/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.logisticsChannel.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'Channel deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.logisticsChannels = db.logisticsChannels.filter(l => l.id !== req.params.id);
     saveDB();
@@ -1963,12 +2417,38 @@ async function startServer() {
   // ==========================================
   // Warehouses API
   // ==========================================
-  app.get('/api/warehouses', (req, res) => {
+  app.get('/api/warehouses', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const whs = await prisma.warehouse.findMany();
+        return res.json(whs);
+      } catch (err) {
+        console.error('Prisma warehouses fetch error:', err);
+      }
+    }
     const db = getDB();
     res.json(db.warehouses);
   });
 
-  app.post('/api/warehouses', (req, res) => {
+  app.post('/api/warehouses', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const newWh = await prisma.warehouse.create({
+          data: {
+            name: req.body.name,
+            code: req.body.code,
+            address: req.body.address || '-'
+          }
+        });
+        return res.status(201).json({ status: 'success', warehouse: newWh });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const newWh = {
       id: 'wh_' + Math.random().toString(36).substr(2, 9),
@@ -1976,10 +2456,27 @@ async function startServer() {
     };
     db.warehouses.push(newWh);
     saveDB();
-    res.json({ status: 'success', warehouse: newWh });
+    res.status(201).json({ status: 'success', warehouse: newWh });
   });
 
-  app.put('/api/warehouses/:id', (req, res) => {
+  app.put('/api/warehouses/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.warehouse.update({
+          where: { id: req.params.id },
+          data: {
+            name: req.body.name,
+            code: req.body.code,
+            address: req.body.address
+          }
+        });
+        return res.json({ status: 'success', warehouse: updated });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     const index = db.warehouses.findIndex(w => w.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Warehouse not found' });
@@ -1988,7 +2485,17 @@ async function startServer() {
     res.json({ status: 'success', warehouse: db.warehouses[index] });
   });
 
-  app.delete('/api/warehouses/:id', (req, res) => {
+  app.delete('/api/warehouses/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.warehouse.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'Warehouse deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
     const db = getDB();
     db.warehouses = db.warehouses.filter(w => w.id !== req.params.id);
     saveDB();
@@ -2461,9 +2968,7 @@ Based on the current database state, all inventory levels are synced. Let me kno
     if (user) {
       return res.json(user);
     }
-    const db = getDB();
-    // Return the default user if no token is active
-    res.json(db.users[0]);
+    return res.status(401).json({ error: 'Unauthorized: invalid or missing token' });
   });
 
   app.post('/api/auth/logout', (req, res) => {

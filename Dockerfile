@@ -18,12 +18,14 @@ FROM node:18-alpine AS runner
 
 WORKDIR /usr/src/app
 
-COPY package*.json ./
-# Install production dependencies only (exclude devDependencies)
-RUN npm ci --only=production
-
-# Copy built artifacts from the builder stage
+# Copy built artifacts, node_modules (including prisma CLI/dependencies) and schema
 COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /usr/src/app/prisma ./prisma
+COPY --from=builder /usr/src/app/package*.json ./
+COPY --from=builder /usr/src/app/entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x ./entrypoint.sh
 
 # Set production variables
 ENV NODE_ENV=production
@@ -31,4 +33,4 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+ENTRYPOINT ["./entrypoint.sh"]

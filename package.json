@@ -12,7 +12,8 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:seed": "tsx prisma/seed.ts",
-    "db:init": "npm run prisma:generate && npm run prisma:push && npm run prisma:seed"
+    "db:init": "npm run prisma:generate && npm run prisma:push && npm run prisma:seed",
+    "test:smoke": "tsx scripts/smoke-test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
