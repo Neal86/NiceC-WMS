@@ -5,8 +5,11 @@ import {
 import { 
   LayoutDashboard, Package, Boxes, ArrowDownLeft, ArrowUpRight, 
   RotateCcw, Landmark, Code2, HelpCircle, Settings, LogOut, 
-  Plus, Search, Shield, BadgeCheck, FileText, ChevronRight, Activity, Bell
+  Plus, Search, Shield, BadgeCheck, FileText, ChevronRight, Activity, Bell, Link2
 } from 'lucide-react';
+import ReturnManager from './returns/ReturnManager';
+import BillingView from './billing/BillingView';
+import IntegrationCenter from './integration/IntegrationCenter';
 
 interface ClientPortalProps {
   currentUser: {
@@ -492,98 +495,11 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
               )}
             </div>
           ) : activeTab === 'returns' ? (
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 shadow-lg text-center select-none">
-              <RotateCcw className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-              <h3 className="text-sm font-bold text-slate-200">客退与退货管理 RMA Center</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto mt-2 leading-relaxed">
-                仓库收到海外买家退回的包裹后，将提供拍照与翻新服务。退货签收日志与理赔单据将在这里实时显示并严格按客户代码隔离。
-              </p>
-              <button onClick={() => alert('暂无待处理退货。')} className="mt-4 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer">
-                新建退货预告
-              </button>
-            </div>
+            <ReturnManager currentUser={currentUser} />
           ) : activeTab === 'billing' ? (
-            <div className="space-y-6">
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 shadow-lg">
-                <h3 className="text-sm font-bold text-slate-200 mb-2">商户账单与预存余额 My Billing</h3>
-                <p className="text-xs text-slate-400 mb-6">按体积、包裹重、仓储天数进行多维度精确计费。</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="p-4 bg-slate-900 rounded-lg border border-slate-800">
-                    <p className="text-[10px] text-slate-400">账户预存余额</p>
-                    <p className="text-2xl font-mono font-bold text-white mt-1">$4,250.00</p>
-                  </div>
-                  <div className="p-4 bg-slate-900 rounded-lg border border-slate-800">
-                    <p className="text-[10px] text-slate-400">本月待付账单</p>
-                    <p className="text-2xl font-mono font-bold text-slate-200 mt-1">$812.50</p>
-                  </div>
-                  <div className="p-4 bg-slate-900 rounded-lg border border-slate-800">
-                    <p className="text-[10px] text-slate-400">上月已结扣款</p>
-                    <p className="text-2xl font-mono font-bold text-slate-200 mt-1">$1,230.00</p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto text-xs">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400 font-semibold">
-                        <th className="py-2.5">账单日期</th>
-                        <th>计费类型</th>
-                        <th>实发包数</th>
-                        <th>结算状态</th>
-                        <th>扣款总金额</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-850 text-slate-300">
-                      <tr>
-                        <td className="py-3 font-mono text-slate-400">2026-06-30</td>
-                        <td>一件代发单包裹处理费</td>
-                        <td className="font-mono">420 包</td>
-                        <td><span className="text-emerald-400 font-semibold">已扣款</span></td>
-                        <td className="font-mono text-white">$1,230.00</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <BillingView currentUser={currentUser} />
           ) : activeTab === 'api' ? (
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 shadow-lg space-y-6">
-              <div>
-                <h3 className="text-sm font-bold text-slate-200">API 授权对接开发者凭证 Developer Integrations</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  使用 JSON REST API 或者 Webhook 实现与 Amazon, Shopify, ERP 系统的自动化出库及库存数据回显。
-                </p>
-              </div>
-
-              <div className="p-4 bg-slate-900 rounded-lg border border-slate-800 space-y-4 text-xs font-mono">
-                <div>
-                  <p className="text-[10px] text-slate-500 font-semibold mb-1 uppercase">Sandbox Merchant ID (商户ID)</p>
-                  <p className="text-slate-200 font-bold">{currentUser.customerId || 'CUST_1'}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-slate-500 font-semibold mb-1 uppercase">API Access Client Key (APPKEY)</p>
-                  <p className="text-slate-200 font-bold">nicec_app_client_key_92503_sandbox_v1</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-slate-500 font-semibold mb-1 uppercase">API Secret Token (APPSECRET)</p>
-                  <p className="text-blue-400 font-bold select-all">••••••••••••••••••••••••••••••••</p>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800">
-                <h4 className="text-xs font-bold text-slate-300 mb-2">数据回传推送 (Webhook Endpoint)</h4>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    defaultValue="https://api.merchant-erp.com/v1/wms-sync"
-                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-blue-500"
-                  />
-                  <button onClick={() => alert('Webhook 保存并测试发送成功！')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold transition-colors cursor-pointer">
-                    保存并测试
-                  </button>
-                </div>
-              </div>
-            </div>
+            <IntegrationCenter currentUser={currentUser} />
           ) : activeTab === 'tickets' ? (
             <div className="space-y-6">
               <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 shadow-lg">

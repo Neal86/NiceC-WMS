@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
-import { authApi, inventoryApi, outboundApi, logApi } from '../api';
+import { useState, useEffect, useCallback } from 'react';
+import api, { authApi, inventoryApi, outboundApi, logApi, inboundApi, putawayApi, pickApi, reviewApi, returnApi, exceptionApi } from '../api';
 import { WMSAIWidget } from './wms-ai-assistant/WMSAIWidget';
 import { 
   Package, ClipboardList, Truck, RotateCcw, AlertTriangle, 
-  CheckCircle2, Clock, BarChart3, LogOut, Warehouse as WarehouseIcon,
-  Scan, ArrowDownToLine, ArrowUpFromLine, PackageCheck, FileText
+  CheckCircle2, Clock, LogOut, Warehouse as WarehouseIcon,
+  ArrowDownToLine, ArrowUpFromLine, PackageCheck, FileText,
+  RefreshCw, Loader2, Inbox
 } from 'lucide-react';
 
 interface WarehousePortalProps {
@@ -23,6 +24,38 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
   });
   const [recentTasks, setRecentTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Receiving tab state
+  const [receivingOrders, setReceivingOrders] = useState<any[]>([]);
+  const [receivingLoading, setReceivingLoading] = useState(false);
+
+  // Putaway tab state
+  const [putawayTasks, setPutawayTasks] = useState<any[]>([]);
+  const [putawayLoading, setPutawayLoading] = useState(false);
+
+  // Picking tab state
+  const [pickTasks, setPickTasks] = useState<any[]>([]);
+  const [pickingLoading, setPickingLoading] = useState(false);
+
+  // Review tab state
+  const [reviewTasks, setReviewTasks] = useState<any[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
+
+  // Shipping tab state
+  const [shippingOrders, setShippingOrders] = useState<any[]>([]);
+  const [shippingLoading, setShippingLoading] = useState(false);
+
+  // Returns tab state
+  const [returnOrders, setReturnOrders] = useState<any[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+
+  // Exceptions tab state
+  const [exceptionCases, setExceptionCases] = useState<any[]>([]);
+  const [exceptionsLoading, setExceptionsLoading] = useState(false);
+
+  // Logs tab state
+  const [operationLogs, setOperationLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
     loadDashboardData();
@@ -53,6 +86,202 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
     }
   };
 
+  // Receiving tab functions
+  const loadReceivingOrders = useCallback(async () => {
+    setReceivingLoading(true);
+    try {
+      const data = await inboundApi.getOrders({ status: 'PENDING' });
+      setReceivingOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load receiving orders', err);
+      setReceivingOrders([]);
+    } finally {
+      setReceivingLoading(false);
+    }
+  }, []);
+
+  const handleReceive = async (orderId: string) => {
+    try {
+      await inboundApi.receive(orderId, []);
+      await loadReceivingOrders();
+    } catch (err) {
+      console.error('Failed to receive order', err);
+    }
+  };
+
+  // Putaway tab functions
+  const loadPutawayTasks = useCallback(async () => {
+    setPutawayLoading(true);
+    try {
+      const data = await putawayApi.getTasks();
+      setPutawayTasks(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load putaway tasks', err);
+      setPutawayTasks([]);
+    } finally {
+      setPutawayLoading(false);
+    }
+  }, []);
+
+  const handlePutawayComplete = async (taskId: string) => {
+    try {
+      await putawayApi.complete(taskId);
+      await loadPutawayTasks();
+    } catch (err) {
+      console.error('Failed to complete putaway task', err);
+    }
+  };
+
+  // Picking tab functions
+  const loadPickTasks = useCallback(async () => {
+    setPickingLoading(true);
+    try {
+      const data = await pickApi.getTasks();
+      setPickTasks(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load pick tasks', err);
+      setPickTasks([]);
+    } finally {
+      setPickingLoading(false);
+    }
+  }, []);
+
+  const handlePickComplete = async (taskId: string) => {
+    try {
+      await pickApi.complete(taskId);
+      await loadPickTasks();
+    } catch (err) {
+      console.error('Failed to complete pick task', err);
+    }
+  };
+
+  // Review tab functions
+  const loadReviewTasks = useCallback(async () => {
+    setReviewLoading(true);
+    try {
+      const data = await reviewApi.getTasks();
+      setReviewTasks(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load review tasks', err);
+      setReviewTasks([]);
+    } finally {
+      setReviewLoading(false);
+    }
+  }, []);
+
+  const handleReviewComplete = async (taskId: string) => {
+    try {
+      await reviewApi.complete(taskId);
+      await loadReviewTasks();
+    } catch (err) {
+      console.error('Failed to complete review task', err);
+    }
+  };
+
+  // Shipping tab functions
+  const loadShippingOrders = useCallback(async () => {
+    setShippingLoading(true);
+    try {
+      const res = await outboundApi.getOrders({ tab: 'SHIPPING', page: 1, pageSize: 100 });
+      setShippingOrders(res.orders || []);
+    } catch (err) {
+      console.error('Failed to load shipping orders', err);
+      setShippingOrders([]);
+    } finally {
+      setShippingLoading(false);
+    }
+  }, []);
+
+  const handleShip = async (orderId: string) => {
+    try {
+      await api.post(`/outbound-orders/${orderId}/ship`);
+      await loadShippingOrders();
+    } catch (err) {
+      console.error('Failed to ship order', err);
+    }
+  };
+
+  // Returns tab functions
+  const loadReturnOrders = useCallback(async () => {
+    setReturnsLoading(true);
+    try {
+      const data = await returnApi.getOrders();
+      setReturnOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load return orders', err);
+      setReturnOrders([]);
+    } finally {
+      setReturnsLoading(false);
+    }
+  }, []);
+
+  const handleReturnReceive = async (orderId: string) => {
+    try {
+      await returnApi.receive(orderId);
+      await loadReturnOrders();
+    } catch (err) {
+      console.error('Failed to receive return order', err);
+    }
+  };
+
+  // Exceptions tab functions
+  const loadExceptionCases = useCallback(async () => {
+    setExceptionsLoading(true);
+    try {
+      const data = await exceptionApi.getCases();
+      setExceptionCases(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load exception cases', err);
+      setExceptionCases([]);
+    } finally {
+      setExceptionsLoading(false);
+    }
+  }, []);
+
+  const handleResolveException = async (caseId: string) => {
+    try {
+      await exceptionApi.resolve(caseId);
+      await loadExceptionCases();
+    } catch (err) {
+      console.error('Failed to resolve exception case', err);
+    }
+  };
+
+  // Logs tab functions
+  const loadOperationLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const data = await logApi.getOperationLogs();
+      setOperationLogs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load operation logs', err);
+      setOperationLogs([]);
+    } finally {
+      setLogsLoading(false);
+    }
+  }, []);
+
+  // Load data when tab changes
+  useEffect(() => {
+    if (activeTab === 'receiving') {
+      loadReceivingOrders();
+    } else if (activeTab === 'putaway') {
+      loadPutawayTasks();
+    } else if (activeTab === 'picking') {
+      loadPickTasks();
+    } else if (activeTab === 'review') {
+      loadReviewTasks();
+    } else if (activeTab === 'shipping') {
+      loadShippingOrders();
+    } else if (activeTab === 'returns') {
+      loadReturnOrders();
+    } else if (activeTab === 'exceptions') {
+      loadExceptionCases();
+    } else if (activeTab === 'logs') {
+      loadOperationLogs();
+    }
+  }, [activeTab, loadReceivingOrders, loadPutawayTasks, loadPickTasks, loadReviewTasks, loadShippingOrders, loadReturnOrders, loadExceptionCases, loadOperationLogs]);
+
   const statCards = [
     { label: '今日待收货', value: stats.todayInbound, icon: ArrowDownToLine, color: 'bg-blue-500' },
     { label: '今日待拣货', value: stats.todayPicking, icon: Package, color: 'bg-amber-500' },
@@ -69,6 +298,70 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
     { label: '退货收货', icon: RotateCcw, color: 'bg-rose-600', tab: 'returns' },
     { label: '异常处理', icon: AlertTriangle, color: 'bg-red-600', tab: 'exceptions' },
   ];
+
+  const getStatusBadge = (status: string) => {
+    const badges: Record<string, string> = {
+      'PENDING': 'bg-yellow-100 text-yellow-700',
+      'RECEIVED': 'bg-blue-100 text-blue-700',
+      'PICKING': 'bg-indigo-100 text-indigo-700',
+      'REVIEWING': 'bg-purple-100 text-purple-700',
+      'SHIPPING': 'bg-cyan-100 text-cyan-700',
+      'SHIPPED': 'bg-green-100 text-green-700',
+      'COMPLETED': 'bg-green-100 text-green-700',
+      'EXCEPTIONS': 'bg-red-100 text-red-700',
+      'CANCELLED': 'bg-gray-100 text-gray-700',
+      'RESOLVED': 'bg-green-100 text-green-700',
+    };
+    return badges[status] || 'bg-gray-100 text-gray-700';
+  };
+
+  const renderLoading = () => (
+    <div className="flex items-center justify-center py-12">
+      <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+      <span className="ml-3 text-sm text-slate-500">加载中...</span>
+    </div>
+  );
+
+  const renderEmpty = (message: string = '暂无数据') => (
+    <div className="flex flex-col items-center justify-center py-12">
+      <Inbox className="w-12 h-12 text-slate-300 mb-3" />
+      <p className="text-sm text-slate-400">{message}</p>
+    </div>
+  );
+
+  const renderTabHeader = (title: string, onRefresh: () => void) => (
+    <div className="flex items-center justify-between mb-6">
+      <h2 className="text-lg font-bold text-slate-800">{title}</h2>
+      <button
+        onClick={onRefresh}
+        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+      >
+        <RefreshCw className="w-3.5 h-3.5" />
+        刷新
+      </button>
+    </div>
+  );
+
+  const renderTable = (headers: string[], children: React.ReactNode) => (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              {headers.map((header, idx) => (
+                <th key={idx} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {children}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-100 flex font-sans overflow-hidden">
@@ -141,7 +434,7 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {activeTab === 'today' ? (
+          {activeTab === 'today' && (
             <>
               {/* Stats Cards */}
               <div className="grid grid-cols-5 gap-4 mb-6">
@@ -201,23 +494,276 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
                 </div>
               </div>
             </>
-          ) : (
-            <div className="bg-white rounded-xl border border-slate-200 p-12 shadow-sm text-center">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Scan className="w-8 h-8 text-blue-600" />
-              </div>
-              <h3 className="text-base font-bold text-slate-800 mb-2">
-                {quickActions.find(a => a.tab === activeTab)?.label || activeTab}
-              </h3>
-              <p className="text-sm text-slate-400 max-w-md mx-auto">
-                此功能模块正在开发中。仓库操作员可通过此页面完成日常仓内操作。
-              </p>
-              <button
-                onClick={() => setActiveTab('today')}
-                className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-colors"
-              >
-                返回今日任务
-              </button>
+          )}
+
+          {/* Receiving Tab */}
+          {activeTab === 'receiving' && (
+            <div>
+              {renderTabHeader('入库收货', loadReceivingOrders)}
+              {receivingLoading ? renderLoading() : 
+               receivingOrders.length === 0 ? renderEmpty('暂无待收货订单') :
+               renderTable(['ASN单号', '客户', '仓库', '预期日期', '明细数', '状态', '操作'], 
+                 receivingOrders.map((order: any, idx: number) => (
+                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.customerName || order.customerId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.warehouseId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.createdAt ? new Date(order.createdAt).toLocaleDateString('zh-CN') : '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.items?.length || 0}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>
+                         {order.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {order.status === 'PENDING' && (
+                         <button
+                           onClick={() => handleReceive(order.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                         >
+                           收货确认
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Putaway Tab */}
+          {activeTab === 'putaway' && (
+            <div>
+              {renderTabHeader('上架管理', loadPutawayTasks)}
+              {putawayLoading ? renderLoading() :
+               putawayTasks.length === 0 ? renderEmpty('暂无上架任务') :
+               renderTable(['任务号', 'SKU编码', '仓库', '库位', '数量', '状态', '操作'],
+                 putawayTasks.map((task: any, idx: number) => (
+                   <tr key={task.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{task.taskNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.skuCode || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.warehouseId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.locationId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.quantity}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(task.status)}`}>
+                         {task.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {task.status === 'PENDING' && (
+                         <button
+                           onClick={() => handlePutawayComplete(task.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                         >
+                           完成上架
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Picking Tab */}
+          {activeTab === 'picking' && (
+            <div>
+              {renderTabHeader('拣货任务', loadPickTasks)}
+              {pickingLoading ? renderLoading() :
+               pickTasks.length === 0 ? renderEmpty('暂无拣货任务') :
+               renderTable(['任务号', '订单号', 'SKU编码', '数量', '状态', '操作'],
+                 pickTasks.map((task: any, idx: number) => (
+                   <tr key={task.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{task.taskNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.orderId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.skuCode || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{task.quantity}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(task.status)}`}>
+                         {task.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {task.status === 'PENDING' && (
+                         <button
+                           onClick={() => handlePickComplete(task.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition-colors"
+                         >
+                           完成拣货
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Review Tab */}
+          {activeTab === 'review' && (
+            <div>
+              {renderTabHeader('打包复核', loadReviewTasks)}
+              {reviewLoading ? renderLoading() :
+               reviewTasks.length === 0 ? renderEmpty('暂无复核任务') :
+               renderTable(['订单号', '状态', '操作'],
+                 reviewTasks.map((task: any, idx: number) => (
+                   <tr key={task.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{task.orderId || task.id}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(task.status)}`}>
+                         {task.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {task.status === 'PENDING' && (
+                         <button
+                           onClick={() => handleReviewComplete(task.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+                         >
+                           完成复核
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Shipping Tab */}
+          {activeTab === 'shipping' && (
+            <div>
+              {renderTabHeader('出库复核', loadShippingOrders)}
+              {shippingLoading ? renderLoading() :
+               shippingOrders.length === 0 ? renderEmpty('暂无待出库订单') :
+               renderTable(['订单号', '收件人', '承运商', '物流渠道', '重量', '状态', '操作'],
+                 shippingOrders.map((order: any, idx: number) => (
+                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.recipient || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.carrierName || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.logisticsChannelName || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.totalWeight ? `${order.totalWeight}kg` : '-'}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>
+                         {order.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {order.status === 'SHIPPING' && (
+                         <button
+                           onClick={() => handleShip(order.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors"
+                         >
+                           确认出库
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Returns Tab */}
+          {activeTab === 'returns' && (
+            <div>
+              {renderTabHeader('退货收货', loadReturnOrders)}
+              {returnsLoading ? renderLoading() :
+               returnOrders.length === 0 ? renderEmpty('暂无退货订单') :
+               renderTable(['退货单号', '订单号', '客户', '状态', '创建时间', '操作'],
+                 returnOrders.map((order: any, idx: number) => (
+                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{order.returnNo || order.id}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.orderId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.customerName || order.customerId || '-'}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>
+                         {order.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3 text-slate-600">
+                       {order.createdAt ? new Date(order.createdAt).toLocaleDateString('zh-CN') : '-'}
+                     </td>
+                     <td className="px-4 py-3">
+                       {order.status === 'PENDING' && (
+                         <button
+                           onClick={() => handleReturnReceive(order.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-rose-600 rounded-lg hover:bg-rose-700 transition-colors"
+                         >
+                           收货确认
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Exceptions Tab */}
+          {activeTab === 'exceptions' && (
+            <div>
+              {renderTabHeader('异常件处理', loadExceptionCases)}
+              {exceptionsLoading ? renderLoading() :
+               exceptionCases.length === 0 ? renderEmpty('暂无异常件') :
+               renderTable(['案例号', '订单', '类型', '描述', '状态', '操作'],
+                 exceptionCases.map((ec: any, idx: number) => (
+                   <tr key={ec.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{ec.caseNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{ec.orderId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{ec.type || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{ec.description || '-'}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(ec.status)}`}>
+                         {ec.status}
+                       </span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {ec.status === 'PENDING' && (
+                         <button
+                           onClick={() => handleResolveException(ec.id)}
+                           className="px-3 py-1 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+                         >
+                           标记解决
+                         </button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Logs Tab */}
+          {activeTab === 'logs' && (
+            <div>
+              {renderTabHeader('操作记录', loadOperationLogs)}
+              {logsLoading ? renderLoading() :
+               operationLogs.length === 0 ? renderEmpty('暂无操作记录') :
+               renderTable(['时间', '用户', '模块', '操作', '目标', '详情'],
+                 operationLogs.map((log: any, idx: number) => (
+                   <tr key={log.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 text-slate-600">
+                       {log.createdAt ? new Date(log.createdAt).toLocaleString('zh-CN') : '-'}
+                     </td>
+                     <td className="px-4 py-3 text-slate-600">{log.username || log.userId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{log.module || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{log.action || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{log.targetId || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{log.detail || '-'}</td>
+                   </tr>
+                 ))
+               )
+              }
             </div>
           )}
         </div>
