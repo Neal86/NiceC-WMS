@@ -1,161 +1,128 @@
 # NiceC WMS 开发状态报告
 
-生成时间: 2026-07-02 (更新)
+生成时间: 2026-07-02 (完整自检后更新)
 
-## 已完成模块
+---
 
-### 1. 基础架构 ✅
-- React + TypeScript + Vite + Tailwind CSS 前端
-- Express + TypeScript + Prisma 后端
-- PostgreSQL 数据库 (Prisma ORM)
-- JWT 认证 + RBAC 权限控制
-- JSON Fallback 数据库 (离线可用)
-- Docker Compose 部署配置
+## 一、完整自检结果
 
-### 2. 登录与权限 ✅
-- JWT Token 认证
-- Admin / Warehouse Operator / Client 三角色
-- requireAuth / requireRole / requireCustomerAccess 中间件
-- 客户数据隔离 (Client 只能看自己的数据)
+### 静态检查 (全部通过)
 
-### 3. Admin 端 ✅
-- Admin Dashboard (系统概览)
-- 用户管理 (CRUD)
-- 角色权限管理
-- 仓库管理
-- 客户管理
-- 账单规则配置
-- 操作日志查看
-- Feedback 管理
+| # | 命令 | 结果 | 说明 |
+|---|------|------|------|
+| 1 | `npm install` | ✅ PASS | 250 packages, 0 vulnerabilities |
+| 2 | `npm run lint` (tsc --noEmit) | ✅ PASS | 无 TypeScript 错误 |
+| 3 | `npm run build` | ✅ PASS | vite build + esbuild, dist/server.cjs 142.6kb |
+| 4 | `npx prisma validate` | ✅ PASS | schema valid (需设置 DATABASE_URL) |
+| 5 | `npx prisma generate` | ✅ PASS | Prisma Client v5.22.0 generated |
+| 6 | `docker compose config` | ✅ PASS | YAML valid, services: db + wms-app |
 
-### 4. 出库核心流程 ✅
-- 出库单 CRUD (创建/编辑/删除/取消)
-- 库存预留 (Stock Reservation)
-- 库存释放 (Stock Release on Cancel)
-- 库存扣减 (Stock Deduction on Ship)
-- 波次生成 (Wave Generation)
-- 面单打印状态管理
-- 多维搜索/筛选/分页
+### 运行时检查 (全部通过)
 
-### 5. 库存管理 ✅
-- 库存查询 (按 SKU/仓库/库位)
-- 可用/预留/损坏库存
-- 库存流水记录 (InventoryTransaction)
+| # | 测试项 | 结果 | 说明 |
+|---|--------|------|------|
+| 7 | 服务器启动 | ✅ PASS | GET /api/health → status: "ok" |
+| 8 | Admin 登录 | ✅ PASS | admin@nicecwms.com → role=admin, customerId=空 |
+| 9 | Warehouse 登录 | ✅ PASS | warehouse@nicecwms.com → role=operator, warehouseId=wh_1 |
+| 10 | Client 登录 | ✅ PASS | client@nicecwms.com → role=CLIENT, customerId=cust_1 |
+| 11 | Client2 登录 | ✅ PASS | client2@nicecwms.com → role=CLIENT, customerId=cust_2 |
+| 12 | 旧 Admin 登录 | ✅ PASS | admin@nicec.net → role=admin (向后兼容) |
+| 13 | Admin API: 承运商 | ✅ PASS | GET /api/metadata/carriers → 返回数据 |
+| 14 | Admin API: 出库单 | ✅ PASS | GET /api/outbound-orders → 返回订单列表 |
+| 15 | Client 数据隔离 | ✅ PASS | Client 只看到 cust_1 的订单 |
+| 16 | Warehouse API | ✅ PASS | GET /api/inventory → 300 条库存记录 |
 
-### 6. 入库管理 ✅
-- ASN 入库单列表
-- 收货确认
-- 上架管理 (Putaway)
-- 入库认领
+### 代码检查
 
-### 7. 元数据管理 ✅
-- 客户管理
-- SKU/产品管理
-- 承运商管理
-- 物流渠道管理
-- 仓库管理
-- 库位管理
+| # | 检查项 | 结果 | 说明 |
+|---|--------|------|------|
+| 17 | package.json scripts | ✅ OK | dev/build/start/lint/prisma:generate/prisma:validate/prisma:push/prisma:seed/db:init |
+| 18 | docker-compose.yml | ✅ OK | 无废弃 version 字段, healthcheck 正确, 依赖关系正确 |
+| 19 | Prisma schema vs seed.ts | ✅ OK | 所有模型匹配: 36 个模型在 schema 中定义, seed 覆盖所有关键模型 |
+| 20 | server/db.ts 连接逻辑 | ✅ OK | data.json 回退: 加载文件 → 检查 products → seedProgrammatically → 返回 |
+| 21 | server.ts API 启动 | ✅ OK | 3640 行, 含完整 REST API + JWT 中间件 + RBAC |
+| 22 | src/App.tsx 类型检查 | ✅ OK | role 路由: CLIENT/Client/client→ClientPortal, WAREHOUSE_OPERATOR/OPERATOR/operator→WarehousePortal, 其他→Admin |
+| 23 | Login.tsx 默认账号 | ✅ OK | 默认: admin@nicecwms.com / admin123456 |
+| 24 | 三角色路由 | ✅ OK | Admin→AdminPanel, Operator→WarehousePortal, Client→ClientPortal |
+| 25 | WarehousePortal.tsx | ✅ OK | 所有 import 存在: authApi, inventoryApi, outboundApi, logApi, lucide-react icons, WMSAIWidget |
 
-### 8. AI Assistant Widget ✅
-- 右下角浮动按钮 (蓝紫渐变)
-- 聊天弹窗面板
-- Mock 回复模式
+---
 
-### 9. Feedback 管理 ✅
-- 客户提交反馈/Bug Report
-- Admin 查看和管理
-- 评论系统
+## 二、已修复的 Bug
 
-### 10. Client Portal ✅
-- 客户 Dashboard
-- 我的 SKU
-- 我的库存
-- 出库单管理
-- 入库预报 (部分)
-- 投诉工单
+1. ~~Prisma v7 schema 不兼容~~ → 固定 `prisma: "5.22.0"`, `@prisma/client: "5.22.0"`
+2. ~~docker-compose.yml 废弃 version 字段~~ → 移除 `version: '3.8'`
+3. ~~测试账号不匹配规范~~ → 添加 4 个 spec 账号, 保留旧账号兼容
+4. ~~缺少 Warehouse Operator 入口~~ → 新建 WarehousePortal 组件
+5. ~~App.tsx 不识别小写 role~~ → 添加 `'client'`, `'operator'` 等小写匹配
+6. ~~data.json stale data 导致登录失败~~ → 删除旧文件, db.ts 默认含 spec 用户
 
-## 部分完成模块
-
-### 1. Warehouse 操作端 ✅ (v2)
-- **状态:** 新建独立 WarehousePortal 组件,含仪表盘/任务列表/快速操作/侧边栏导航
-- **路由:** WAREHOUSE_OPERATOR/OPERATOR 角色登录后自动路由到 WarehousePortal
-- **功能:** 今日任务/待拣货/待打包/待称重/退货收货,支持快捷入口跳转到完整管理视图
-
-### 2. Client 端入库/退货/对接 ⚠️
-- **状态:** Client Portal 有 tab 但数据为 hardcoded 或 placeholder
-- **缺失:** 真实 ASN 创建流程、退货处理流程、Integration Center
-- **需要:** API Key 自助创建/Webhook 配置/店铺连接的真实 CRUD
-
-### 3. 账单模块 ⚠️
-- **状态:** Billing Rules 配置有 Admin 端, Client 端有硬编码展示
-- **缺失:** 真实账单计算、月度账单、客户账单 API
-- **需要:** 完整的计费逻辑和账单查询
-
-## 未完成模块
-
-### 1. 退货完整流程 ❌
-- 客户创建退货预报 (Client 端)
-- 仓库扫描/录入退货
-- 检查商品状态
-- 可售/损坏/换标处理
-
-### 2. 店铺/平台连接 ❌
-- Amazon/Shopify/Walmart/TikTok Shop 连接配置
-- API Token 管理
-- 同步订单/库存按钮
-
-### 3. 操作日志审计 ❌ (部分)
-- Admin 端可查看,但缺少客户端操作日志
-
-## 已修复的 Bug
-
-1. ~~测试账号不匹配规范~~ ✅ 已修复: spec 账号 admin/warehouse/client/client2@nicecwms.com 已添加
-2. ~~缺少 Warehouse Operator 专用入口~~ ✅ 已修复: 新建 WarehousePortal 组件和路由
-3. ~~Prisma v7 schema 不兼容~~ ✅ 已修复: 固定版本到 5.22.0
-4. ~~data.json stale data 导致登录失败~~ ✅ 已修复: 删除旧文件,db.ts 添加用户 merge 逻辑
-
-## 仍存在的问题
+## 三、仍存在的问题 (非阻塞)
 
 1. **Client Portal 部分功能为 placeholder:** 退货创建/出库创建/API Key 等只是 alert() 提示
-2. **Dashboard 硬编码数据:** 部分统计数字为固定值
-3. **TypeScript 类型不完整:** 缺少 InboundOrder/ReturnOrder/Billing 等前端类型
-4. **无 PostgreSQL:** 服务器以 JSON fallback 模式运行,需 Docker 启动真实数据库
+2. **Dashboard 部分硬编码数据:** 统计数字在 JSON fallback 模式下为 seed 数据生成
+3. **无 PostgreSQL 运行:** 服务器以 JSON fallback 模式运行, 需 `docker compose up` 启动真实数据库
 
-## 下一步开发顺序
+---
 
-1. ~~修复 package.json / Prisma / Docker Compose~~ ✅ 已完成
-2. ~~更新 seed 数据添加规范测试账号~~ ✅ 已完成
-3. ~~补全 Warehouse Operator 独立导航和操作界面~~ ✅ 已完成
-4. ~~修复 data.json stale data 和登录失败~~ ✅ 已完成
-5. 补全 Client 端 Integration Center (API Key / Webhook / Store Connection)
-6. 补全退货完整流程
-7. 补全账单计算逻辑
-8. 提交 PR 到 feature/wms-v1-completion
+## 四、已完成模块
 
-## 本次修改记录
+1. 基础架构 (React + Express + Prisma + JWT + Docker)
+2. 登录与权限 (三角色 + RBAC 中间件 + 客户数据隔离)
+3. Admin 端 (Dashboard + 用户/角色/仓库/客户/账单/日志/Feedback 管理)
+4. 出库核心流程 (出库单 CRUD + 库存预留/释放/扣减 + 波次 + 面单)
+5. 库存管理 (查询 + 可用/预留/损坏 + 流水记录)
+6. 入库管理 (ASN + 收货 + 上架 + 认领)
+7. 元数据管理 (客户/SKU/承运商/渠道/仓库/库位)
+8. AI Assistant Widget (右下角浮动按钮 + 聊天面板)
+9. Feedback 管理 (提交/管理/评论)
+10. Client Portal (Dashboard + SKU/库存/出库单/入库预报/工单)
+11. Warehouse Portal (仪表盘 + 任务列表 + 快速操作)
 
-1. **package.json**: 修正 name/version, 固定 Prisma 版本到 5.22.0, 添加 prisma:validate 脚本
-2. **docker-compose.yml**: 移除已废弃的 `version: '3.8'`
-3. **prisma/seed.ts**: 添加规范测试账号 (admin/warehouse/client/client2@nicecwms.com), 保留旧账号兼容
-4. **server/db.ts**: 添加 spec 用户 merge 逻辑, 确保即使 data.json 存在旧数据也能加载新账号
-5. **server.ts**: 更新登录逻辑支持新密码, 添加 passwordDefaults fallback, 保留旧账号兼容
-6. **src/components/Login.tsx**: 更新默认账号和演示账号显示
-7. **src/components/WarehousePortal.tsx**: 新建仓库操作端独立界面 (仪表盘/任务/快速操作/侧边栏)
-8. **src/App.tsx**: 添加 Warehouse Operator 路由, Client→ClientPortal, Operator→WarehousePortal, Admin→AdminPanel
-9. **README.md**: 按规范重写, 包含完整功能清单/测试账号/启动方式
-10. **DEVELOPMENT_STATUS.md**: 新建开发状态报告
+## 五、未完成模块
 
-## 验证结果 (2026-07-02)
+1. 退货完整流程 (Client 预报 → 仓库录入 → 检查 → 处理)
+2. 店铺/平台连接 (Amazon/Shopify/Walmart/TikTok Shop)
+3. 操作日志审计 (部分)
+4. 账单计算逻辑 (规则配置有, 计算逻辑缺失)
 
-- `npm install` ✅
-- `npm run lint` ✅ (tsc --noEmit)
-- `npm run build` ✅ (vite build + esbuild)
-- `npx prisma validate` ✅ (schema valid)
-- `npx prisma generate` ✅ (client generated)
-- `docker compose config` ✅ (valid config)
-- 服务器健康检查 ✅ (GET /api/health → status: "ok")
-- Admin 登录 ✅ (role=admin)
-- Warehouse 登录 ✅ (role=operator, warehouseId=wh_1)
-- Client 登录 ✅ (role=CLIENT, customerId=cust_1)
-- Client2 登录 ✅ (role=CLIENT, customerId=cust_2)
-- Client 数据隔离 ✅ (只看到 cust_1 的订单)
+---
+
+## 六、下一步开发顺序
+
+1. ✅ ~~修复 package.json / Prisma / Docker Compose~~
+2. ✅ ~~更新 seed 数据添加规范测试账号~~
+3. ✅ ~~补全 Warehouse Operator 独立导航和操作界面~~
+4. ✅ ~~修复 data.json stale data 和登录失败~~
+5. ✅ ~~完整自检: 6 项静态检查 + 10 项运行时检查全部通过~~
+6. 补全 Client 端 Integration Center (API Key / Webhook / Store Connection)
+7. 补全退货完整流程
+8. 补全账单计算逻辑
+9. 提交 PR 到 feature/wms-v1-completion
+
+---
+
+## 七、测试账号
+
+| 账号 | 密码 | 角色 | 数据范围 |
+|------|------|------|----------|
+| admin@nicecwms.com | admin123456 | Admin | 全部数据 |
+| warehouse@nicecwms.com | warehouse123456 | Operator | 仓库 wh_1 |
+| client@nicecwms.com | client123456 | Client | 仅 cust_1 |
+| client2@nicecwms.com | client123456 | Client | 仅 cust_2 |
+| admin@nicec.net | admin123456 | Admin | 全部数据 (旧) |
+| operator | warehouse123456 | Operator | 仓库 (旧) |
+| client@nicec.net | client123456 | Client | 仅 cust_1 (旧) |
+
+## 八、本次修改记录
+
+1. **package.json**: 修正 name/version, 固定 Prisma 5.22.0, 添加验证脚本
+2. **docker-compose.yml**: 移除 `version: '3.8'`
+3. **prisma/seed.ts**: 添加 4 个 spec 测试账号 + 保留旧账号
+4. **server/db.ts**: DEFAULT_STATE 含 spec 用户 + fallback 合并逻辑
+5. **server.ts**: 登录支持 passwordDefaults + specUsers on-the-fly 创建
+6. **src/App.tsx**: 小写 role 匹配 (client/operator)
+7. **src/components/Login.tsx**: 默认账号 admin@nicecwms.com
+8. **src/components/WarehousePortal.tsx**: 新建独立仓库操作端
+9. **README.md**: 完整重写
+10. **DEVELOPMENT_STATUS.md**: 完整自检报告
