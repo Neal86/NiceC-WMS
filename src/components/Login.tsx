@@ -8,8 +8,8 @@ interface LoginProps {
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
-  const [username, setUsername] = useState('neal@nicec.net');
-  const [password, setPassword] = useState('password123');
+  const [username, setUsername] = useState('admin@nicecwms.com');
+  const [password, setPassword] = useState('admin123456');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -127,16 +127,16 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <p className="text-slate-500 text-[11px]">演示环境可用账号：</p>
           <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2 text-slate-400 text-xs font-mono">
             <div>
-              <span className="text-slate-500">管理员:</span> neal@nicec.net
+              <span className="text-slate-500">管理员:</span> admin@nicecwms.com
             </div>
             <div>
-              <span className="text-slate-500">操作员:</span> operator
+              <span className="text-slate-500">仓库操作员:</span> warehouse@nicecwms.com
             </div>
             <div>
-              <span className="text-slate-500">外部客户:</span> client@nicec.net
+              <span className="text-slate-500">客户:</span> client@nicecwms.com
             </div>
           </div>
-          <div className="text-[10px] text-slate-600 mt-2">密码随意输入即可 (或 admin123 / client123 / operator123)</div>
+          <div className="text-[10px] text-slate-600 mt-2">密码: admin123456 / warehouse123456 / client123456</div>
         </div>
       </div>
     </div>

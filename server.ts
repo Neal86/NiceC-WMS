@@ -328,19 +328,77 @@ async function startServer() {
     const db = getDB();
     let localUser = db.users.find(u => u.username === username || u.email === username);
     
-    // Add client user on-the-fly to the fallback database if it's not present
-    if (username === 'client@nicec.net' && !localUser) {
-      localUser = {
+    // Add spec-required users on-the-fly to the fallback database if not present
+    const specUsers: Record<string, any> = {
+      'client@nicecwms.com': {
+        id: 'usr_client_spec',
+        username: 'client@nicecwms.com',
+        email: 'client@nicecwms.com',
+        role: 'CLIENT' as any,
+        customerId: 'cust_1',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      },
+      'client2@nicecwms.com': {
+        id: 'usr_client2_spec',
+        username: 'client2@nicecwms.com',
+        email: 'client2@nicecwms.com',
+        role: 'CLIENT' as any,
+        customerId: 'cust_2',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      },
+      'client@nicec.net': {
         id: 'usr_client',
-        username: 'yukon_client',
+        username: 'client@nicec.net',
         email: 'client@nicec.net',
         role: 'CLIENT' as any,
         customerId: 'cust_1',
         status: 'ACTIVE',
         createdAt: new Date().toISOString()
-      } as any;
+      },
+    };
+    
+    if (!localUser && specUsers[username]) {
+      localUser = specUsers[username];
       db.users.push(localUser);
       saveDB();
+    }
+
+    // For fallback: check passwords against spec defaults
+    const passwordDefaults: Record<string, string> = {
+      'admin@nicecwms.com': 'admin123456',
+      'warehouse@nicecwms.com': 'warehouse123456',
+      'client@nicecwms.com': 'client123456',
+      'client2@nicecwms.com': 'client123456',
+      'admin@nicec.net': 'admin123456',
+      'neal@nicec.net': 'admin123456',
+      'operator@nicec.net': 'warehouse123456',
+      'operator': 'warehouse123456',
+      'client@nicec.net': 'client123456',
+    };
+
+    if (localUser && passwordDefaults[username] && password === passwordDefaults[username]) {
+      const u = localUser as any;
+      const token = jwt.sign(
+        { 
+          id: u.id, 
+          username: u.username, 
+          email: u.email, 
+          role: u.role, 
+          customerId: u.customerId 
+        },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      
+      return res.json({
+        status: 'success',
+        user: {
+          ...localUser,
+          token
+        }
+      });
     }
 
     if (localUser) {
@@ -368,7 +426,7 @@ async function startServer() {
     
     return res.status(401).json({
       status: 'error',
-      message: '用户名或密码错误。可用账号: neal@nicec.net、operator 或 client@nicec.net'
+      message: '用户名或密码错误。可用账号: admin@nicecwms.com/admin123456, warehouse@nicecwms.com/warehouse123456, client@nicecwms.com/client123456'
     });
   });
 
