@@ -1,8 +1,47 @@
 # NiceC WMS 仓库管理系统
 
-NiceC WMS 是一个面向海外仓业务的全栈仓库管理系统，采用 **React + TypeScript + Vite + Express + Prisma + PostgreSQL** 架构，支持出库一件代发、波次、库存预留、入库、上架、客户门户、管理员后台、反馈管理与 AI 助手等模块。
+NiceC WMS 是一个面向海外仓业务的全栈仓库管理系统，采用 **React + TypeScript + Vite + Express + Prisma + PostgreSQL** 架构，支持 Admin 管理端、Warehouse 仓库操作端、Client 客户端三端协作。
 
-> 当前分支目标：把演示型 MVP 升级为可部署、可检查、可继续扩展的生产级版本。
+## 功能清单
+
+### Admin 管理端
+- Dashboard 总览（客户数/SKU数/库存/出入库统计）
+- 用户管理、角色权限管理
+- 客户管理
+- 仓库管理
+- SKU/产品管理
+- 库存总览
+- 入库订单管理（ASN）
+- 出库订单管理
+- 退货订单管理
+- 账单管理
+- 操作日志
+- Feedback / Bug Report 管理
+
+### Warehouse 仓库操作端
+- 今日待处理任务
+- 入库收货 / 上架
+- 库位调整
+- 拣货 / 打包 / 称重
+- 出库复核
+- 退货收货 / 换标
+- 异常件处理
+
+### Client 客户端
+- 客户 Dashboard
+- 我的 SKU / 我的库存
+- 创建出库单 / 批量导入
+- 创建入库预报 ASN
+- 退货管理
+- 账单查看
+- API Key 自助创建
+- Webhook 配置
+- 店铺/ERP 对接配置
+
+### AI Assistant
+- 右下角 AI 助手悬浮按钮
+- 聊天弹窗咨询 WMS 数据
+- Feedback / Report Bug 按钮
 
 ---
 
@@ -36,6 +75,7 @@ NiceC WMS 是一个面向海外仓业务的全栈仓库管理系统，采用 **R
 ## 本地开发
 
 ```bash
+# 1. 安装依赖
 npm install
 cp .env.example .env
 npm run dev
@@ -211,6 +251,55 @@ npm run test:functions
 
 ---
 
+## 角色权限说明
+
+| 功能 | Admin | Warehouse Operator | Client |
+|------|:-----:|:------------------:|:------:|
+| Dashboard 总览 | ✅ | ✅ (仓库视角) | ✅ (客户视角) |
+| 用户管理 | ✅ | ❌ | ❌ |
+| 客户管理 | ✅ | ❌ | ❌ |
+| 仓库管理 | ✅ | ✅ | ❌ |
+| SKU 管理 | ✅ (全部) | ✅ | ✅ (仅自己的) |
+| 库存查看 | ✅ (全部) | ✅ | ✅ (仅自己的) |
+| 出库管理 | ✅ (全部) | ✅ (操作) | ✅ (仅自己的) |
+| 入库管理 | ✅ (全部) | ✅ (收货上架) | ✅ (创建ASN) |
+| 退货管理 | ✅ | ✅ (收货质检) | ✅ (创建退货) |
+| 账单管理 | ✅ | ❌ | ✅ (仅自己的) |
+| API Key / Webhook | ✅ | ❌ | ✅ (仅自己的) |
+| 系统设置 | ✅ | ❌ | ❌ |
+
+## 当前已完成模块
+
+- [x] 登录认证 + JWT
+- [x] 三角色权限控制 + 客户数据隔离
+- [x] Admin Dashboard
+- [x] 出库单完整 CRUD + 库存事务
+- [x] 波次管理 + 面单管理
+- [x] 入库管理 (ASN) + 上架管理
+- [x] SKU/产品/客户/仓库/渠道元数据管理
+- [x] 库存管理 + 库存流水
+- [x] Client Portal (Dashboard/SKU/库存/出库/入库)
+- [x] Feedback 管理
+- [x] AI Assistant Widget
+- [x] 操作日志
+- [x] Docker Compose 部署
+- [x] 自动化冒烟测试
+- [x] 退货管理 (创建/收货/质检/入库)
+- [x] 账单管理 (规则配置/账单记录/发票)
+- [x] API Key / Webhook 管理
+- [x] 店铺/平台连接管理
+- [x] Integration Center 页面
+- [x] WarehousePortal 仓库操作端
+
+## 后续 TODO
+
+- [ ] AI Assistant 接入真实 LLM API
+- [ ] WebSocket 实时推送
+- [ ] 批量操作性能优化
+- [ ] 单元测试覆盖
+- [ ] E2E 测试和备份恢复演练
+- [ ] 正式 Prisma migration 流程
+
 ## 主要 API
 
 ### Auth
@@ -259,6 +348,45 @@ npm run test:functions
 - `PUT /api/billing-rules/:id`
 - `DELETE /api/billing-rules/:id`
 - `GET /api/feedback`
+
+### Integration
+
+- `GET /api/api-keys`
+- `POST /api/api-keys`
+- `PUT /api/api-keys/:id`
+- `DELETE /api/api-keys/:id`
+- `POST /api/api-keys/:id/test`
+- `GET /api/webhooks`
+- `POST /api/webhooks`
+- `PUT /api/webhooks/:id`
+- `DELETE /api/webhooks/:id`
+- `POST /api/webhooks/:id/test`
+- `GET /api/store-connections`
+- `POST /api/store-connections`
+- `PUT /api/store-connections/:id`
+- `DELETE /api/store-connections/:id`
+- `POST /api/store-connections/:id/sync`
+
+### Returns
+
+- `GET /api/return-orders`
+- `POST /api/return-orders`
+- `GET /api/return-orders/:id`
+- `PUT /api/return-orders/:id`
+- `POST /api/return-orders/:id/receive`
+- `POST /api/return-orders/:id/inspect`
+- `POST /api/return-orders/:id/restock`
+
+### Billing
+
+- `GET /api/billing-rules`
+- `POST /api/billing-rules`
+- `PUT /api/billing-rules/:id`
+- `DELETE /api/billing-rules/:id`
+- `GET /api/billing-records`
+- `POST /api/billing-records/generate`
+- `GET /api/invoices`
+- `POST /api/invoices/generate`
 
 ---
 

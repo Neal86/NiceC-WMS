@@ -64,12 +64,49 @@ async function main() {
 
   // 4. Users with hashed passwords
   const salt = await bcrypt.genSalt(10);
-  const adminHash = await bcrypt.hash('admin123', salt);
-  const operatorHash = await bcrypt.hash('operator123', salt);
-  const clientHash = await bcrypt.hash('client123', salt);
+  const adminHash = await bcrypt.hash('admin123456', salt);
+  const operatorHash = await bcrypt.hash('warehouse123456', salt);
+  const clientHash = await bcrypt.hash('client123456', salt);
 
   await prisma.user.createMany({
     data: [
+      // Spec-required accounts
+      {
+        id: 'usr_admin_spec',
+        username: 'admin@nicecwms.com',
+        email: 'admin@nicecwms.com',
+        passwordHash: adminHash,
+        role: 'ADMIN',
+        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=faces',
+      },
+      {
+        id: 'usr_operator_spec',
+        username: 'warehouse@nicecwms.com',
+        email: 'warehouse@nicecwms.com',
+        passwordHash: operatorHash,
+        role: 'WAREHOUSE_OPERATOR',
+        warehouseId: 'wh_1',
+        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=faces',
+      },
+      {
+        id: 'usr_client_spec',
+        username: 'client@nicecwms.com',
+        email: 'client@nicecwms.com',
+        passwordHash: clientHash,
+        role: 'CLIENT',
+        customerId: 'cust_1',
+        avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=faces',
+      },
+      {
+        id: 'usr_client2_spec',
+        username: 'client2@nicecwms.com',
+        email: 'client2@nicecwms.com',
+        passwordHash: clientHash,
+        role: 'CLIENT',
+        customerId: 'cust_2',
+        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=faces',
+      },
+      // Legacy accounts (kept for backward compatibility)
       {
         id: 'usr_admin',
         username: 'admin@nicec.net',

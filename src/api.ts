@@ -352,6 +352,106 @@ export const userApi = {
   }
 };
 
+export const apiKeyApi = {
+  getKeys: async () => {
+    const response = await api.get('/api-keys');
+    return response.data;
+  },
+  createKey: async (data: any) => {
+    const response = await api.post('/api-keys', data);
+    return response.data;
+  },
+  updateKey: async (id: string, data: any) => {
+    const response = await api.put(`/api-keys/${id}`, data);
+    return response.data;
+  },
+  deleteKey: async (id: string) => {
+    const response = await api.delete(`/api-keys/${id}`);
+    return response.data;
+  },
+  testKey: async (id: string) => {
+    const response = await api.post(`/api-keys/${id}/test`);
+    return response.data;
+  }
+};
+
+export const webhookApi = {
+  getWebhooks: async () => {
+    const response = await api.get('/webhooks');
+    return response.data;
+  },
+  createWebhook: async (data: any) => {
+    const response = await api.post('/webhooks', data);
+    return response.data;
+  },
+  updateWebhook: async (id: string, data: any) => {
+    const response = await api.put(`/webhooks/${id}`, data);
+    return response.data;
+  },
+  deleteWebhook: async (id: string) => {
+    const response = await api.delete(`/webhooks/${id}`);
+    return response.data;
+  },
+  testWebhook: async (id: string) => {
+    const response = await api.post(`/webhooks/${id}/test`);
+    return response.data;
+  }
+};
+
+export const storeConnectionApi = {
+  getConnections: async () => {
+    const response = await api.get('/store-connections');
+    return response.data;
+  },
+  createConnection: async (data: any) => {
+    const response = await api.post('/store-connections', data);
+    return response.data;
+  },
+  updateConnection: async (id: string, data: any) => {
+    const response = await api.put(`/store-connections/${id}`, data);
+    return response.data;
+  },
+  deleteConnection: async (id: string) => {
+    const response = await api.delete(`/store-connections/${id}`);
+    return response.data;
+  },
+  syncConnection: async (id: string) => {
+    const response = await api.post(`/store-connections/${id}/sync`);
+    return response.data;
+  }
+};
+
+export const returnApi = {
+  getReturns: async (params?: any) => {
+    const response = await api.get('/return-orders', { params });
+    return response.data;
+  },
+  createReturn: async (data: any) => {
+    const response = await api.post('/return-orders', data);
+    return response.data;
+  },
+  getReturnById: async (id: string) => {
+    const response = await api.get(`/return-orders/${id}`);
+    return response.data;
+  },
+  updateReturn: async (id: string, data: any) => {
+    const response = await api.put(`/return-orders/${id}`, data);
+    return response.data;
+  },
+  receiveReturn: async (id: string) => {
+    const response = await api.post(`/return-orders/${id}/receive`);
+    return response.data;
+  },
+  inspectReturn: async (id: string, items?: any[]) => {
+    const response = await api.post(`/return-orders/${id}/inspect`, { items });
+    return response.data;
+  },
+  restockReturn: async (id: string) => {
+    const response = await api.post(`/return-orders/${id}/restock`);
+    return response.data;
+  }
+};
+
 export const billingApi = {
   getRules: async () => {
     const response = await api.get('/billing-rules');
@@ -368,7 +468,23 @@ export const billingApi = {
   deleteRule: async (id: string) => {
     const response = await api.delete(`/billing-rules/${id}`);
     return response.data;
-  }
+  },
+  getRecords: async () => {
+    const response = await api.get('/billing-records');
+    return response.data;
+  },
+  generateRecords: async () => {
+    const response = await api.post('/billing-records/generate');
+    return response.data;
+  },
+  getInvoices: async () => {
+    const response = await api.get('/invoices');
+    return response.data;
+  },
+  generateInvoice: async () => {
+    const response = await api.post('/invoices/generate');
+    return response.data;
+  },
 };
 
 export default api;
