@@ -9,6 +9,9 @@ import { OutboundOrder, OutboundOrderItem, OrderStatus, Wave, Feedback, Feedback
 import { requirePermission, hasPermission, normalizeRole } from './server/permissions';
 import { generalRateLimit, authRateLimit, corsMiddleware, requestIdMiddleware, errorHandler, notFoundHandler, helmetConfig, compressionMiddleware } from './server/middleware';
 import { loginSchema, outboundCreateSchema, outboundUpdateSchema, inboundCreateSchema, inboundReceiveSchema, inventoryAdjustSchema, inventoryTransferSchema, returnCreateSchema, returnInspectSchema, billingRuleCreateSchema, apiKeyCreateSchema, apiKeyUpdateSchema, webhookCreateSchema, webhookUpdateSchema, storeConnectionCreateSchema, storeConnectionUpdateSchema, userCreateSchema, userUpdateSchema, resetPasswordSchema, feedbackCreateSchema, exceptionCaseCreateSchema, bulkImportSchema, formatZodError } from './server/validation';
+import { carrierAdapter, storeAdapter, storageAdapter } from './server/adapters';
+import { initWebSocket, getWebSocket } from './server/websocket';
+import { processChat } from './server/ai-assistant';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'NiceC-WMS-Secret-Token-Key-2026!';
 
@@ -1743,6 +1746,8 @@ async function startServer() {
           });
         });
 
+        const ws = getWebSocket();
+        if (ws) ws.emit('order.status_changed', { orderId: updated.id, orderNo: updated.orderNo, status: 'CANCELLED' }, updated.customerId);
         return res.json({
           status: 'success',
           message: '订单取消成功',
@@ -1860,6 +1865,7 @@ async function startServer() {
           });
         });
 
+        getWebSocket()?.emit('order.status_changed', { orderId: updated.id, orderNo: updated.orderNo, status: 'SHIPPED' }, updated.customerId);
         return res.json({
           status: 'success',
           message: '出库确认成功，库存已扣减',
@@ -2780,7 +2786,7 @@ async function startServer() {
   });
 
   // ==========================================
-  // WMS AI Assistant API
+  // WMS AI Assistant API (OpenAI-compatible)
   // ==========================================
   let aiHistory: Array<{ id: string; role: 'user' | 'model'; content: string; createdAt: string }> = [
     {
@@ -2807,85 +2813,60 @@ async function startServer() {
     res.json({ status: 'success', message: 'Chat history cleared' });
   });
 
-  app.post('/api/wms-ai-assistant/chat', (req, res) => {
+  app.post('/api/wms-ai-assistant/chat', requireAuth, async (req: any, res) => {
     const { question, warehouseId, operationScope, currentPage } = req.body;
-    
+
     if (!question) {
       return res.status(400).json({ error: 'Question is required' });
     }
 
-    const lowerQ = question.toLowerCase();
-    let responseText = '';
+    try {
+      const result = await processChat({
+        userId: req.user.id,
+        role: req.user.role,
+        customerId: req.user.customerId,
+        question,
+        warehouseId,
+        operationScope,
+        currentPage,
+      });
 
-    // Precise checks based on the required mock responses in sections V & VII
-    if (lowerQ.includes('delayed') || lowerQ.includes('inbound shipments')) {
-      responseText = `There are 6 delayed inbound shipments today. 3 are waiting for unloading, 2 are missing ASN details, and 1 has a barcode mismatch issue. The highest priority shipment is ASN-IN-1028 from NiceC because it contains 240 units of HC-001 needed for pending outbound orders.`;
-    } else if (lowerQ.includes('waiting for picking') || lowerQ.includes('picking')) {
-      responseText = `There are 18 outbound orders waiting for picking. 7 are one-piece dropship orders, 6 are Shopify orders, and 5 are FBA transfer orders. I recommend prioritizing the 5 FBA transfer orders first because their carrier cutoff is 3:30 PM today.`;
-    } else if (lowerQ.includes('low in stock') || lowerQ.includes('skus are low')) {
-      responseText = `5 SKUs are below safety stock:
+      const userMsg = {
+        id: 'msg_' + Math.random().toString(36).substr(2, 9),
+        role: 'user' as const,
+        content: question,
+        createdAt: new Date().toISOString()
+      };
 
-1. HC-001 — 18 units available, safety stock 50
-2. OC-002 — 12 units available, safety stock 40
-3. SC-006 — 24 units available, safety stock 60
-4. HS-008 — 9 units available, safety stock 30
-5. CT-014 — 15 units available, safety stock 45
+      const modelMsg = {
+        id: 'msg_' + Math.random().toString(36).substr(2, 9),
+        role: 'model' as const,
+        content: result.response,
+        createdAt: new Date().toISOString()
+      };
 
-I recommend creating a replenishment alert and checking inbound shipment ASN-IN-1028.`;
-    } else if (lowerQ.includes('exception status') || lowerQ.includes('exception')) {
-      responseText = `There are 11 packages with exception status:
+      aiHistory.push(userMsg, modelMsg);
 
-1. 4 barcode mismatch
-2. 3 weight mismatch
-3. 2 missing label
-4. 1 damaged package
-5. 1 address validation failed
+      // Notify admin/warehouse if this is a client asking a question
+      const ws = getWebSocket();
+      if (ws && req.user.role === 'CLIENT') {
+        ws.emit('feedback.created', {
+          userId: req.user.id,
+          customerId: req.user.customerId,
+          question,
+          preview: result.response.substring(0, 100),
+        }, req.user.customerId);
+      }
 
-The most urgent package is PKG-88321 because it belongs to an expedited order scheduled for carrier pickup today.`;
-    } else if (lowerQ.includes('prioritize') || lowerQ.includes('tasks should i')) {
-      responseText = `Today’s top WMS priorities:
-
-1. Process 6 delayed inbound shipments
-2. Pick 18 outbound orders before carrier cutoff
-3. Resolve 11 exception packages
-4. Reconcile 5 inventory discrepancy records
-5. Review 3 failed label generation orders
-6. Complete FBA transfer order FBA-TR-2049 before 3:30 PM`;
-    } else if (lowerQ.includes('acos') || lowerQ.includes('roas') || lowerQ.includes('listing') || lowerQ.includes('keyword') || lowerQ.includes('竞品') || lowerQ.includes('评论')) {
-      responseText = `I apologize, but as a WMS AI Assistant, I only support WMS warehouse operations, inventory, billing, exceptions, and order processing. I do not answer Amazon PPC (ACOS/ROAS), listings optimization, keywords, reviews, or e-commerce marketing questions. Please let me know how I can assist you with warehouse tasks!`;
-    } else {
-      // General dynamic warehouse response incorporating context
-      responseText = `I have received your query regarding warehouse operations. 
-
-Context Info:
-- Warehouse: ${warehouseId || 'All Warehouses'}
-- Operation Scope: ${operationScope || 'All Operations'}
-- Current Location: ${currentPage || 'WMS Portal'}
-
-Based on the current database state, all inventory levels are synced. Let me know if you would like me to compile metrics for today's inbound shipments or highlight pending pick lists.`;
+      res.json({
+        status: 'success',
+        response: result.response,
+        provider: result.provider,
+        history: aiHistory
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'AI Assistant error' });
     }
-
-    const userMsg = {
-      id: 'msg_' + Math.random().toString(36).substr(2, 9),
-      role: 'user' as const,
-      content: question,
-      createdAt: new Date().toISOString()
-    };
-
-    const modelMsg = {
-      id: 'msg_' + Math.random().toString(36).substr(2, 9),
-      role: 'model' as const,
-      content: responseText,
-      createdAt: new Date().toISOString()
-    };
-
-    aiHistory.push(userMsg, modelMsg);
-
-    res.json({
-      status: 'success',
-      response: responseText,
-      history: aiHistory
-    });
   });
 
   // ==========================================
@@ -3813,30 +3794,35 @@ Based on the current database state, all inventory levels are synced. Let me kno
         const where: any = {};
         if ((user.role || '').toUpperCase() === 'CLIENT') where.customerId = user.customerId;
         const keys = await prisma.apiKey.findMany({ where });
-        return res.json(keys);
+        const masked = keys.map((k: any) => ({
+          ...k,
+          key: k.key && k.key.length > 12 ? k.key.substring(0, 8) + '****' + k.key.substring(k.key.length - 4) : '****'
+        }));
+        return res.json(masked);
       } catch (err) { console.error('Prisma api-keys fetch error:', err); }
     }
     res.json([
-      { id: 'ak_1', customerId: 'cust_1', key: 'nwc_abc123def456', name: 'Production API Key', status: 'ACTIVE', createdAt: '2026-06-20T10:00:00Z' },
-      { id: 'ak_2', customerId: 'cust_1', key: 'nwc_xyz789ghi012', name: 'Staging API Key', status: 'ACTIVE', createdAt: '2026-06-25T14:30:00Z' }
+      { id: 'ak_1', customerId: 'cust_1', key: 'nwc_ab****ef456', name: 'Production API Key', status: 'ACTIVE', createdAt: '2026-06-20T10:00:00Z' },
+      { id: 'ak_2', customerId: 'cust_1', key: 'nwc_xy****hi012', name: 'Staging API Key', status: 'ACTIVE', createdAt: '2026-06-25T14:30:00Z' }
     ]);
   });
 
   app.post('/api/api-keys', requireAuth, async (req: any, res) => {
     const user = req.user;
     const { name, scope } = req.body;
-    const key = 'nwc_' + require('crypto').randomBytes(24).toString('hex');
+    const rawKey = 'nwc_' + require('crypto').randomBytes(24).toString('hex');
+    const keyHash = await bcrypt.hash(rawKey, 10);
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const apiKey = await prisma.apiKey.create({
-          data: { customerId: user.customerId || '', key, status: 'ACTIVE' }
+          data: { customerId: user.customerId || '', key: keyHash, status: 'ACTIVE' }
         });
-        return res.status(201).json(apiKey);
+        return res.status(201).json({ ...apiKey, key: rawKey });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
-    return res.status(201).json({ id: 'ak_' + Date.now(), customerId: user.customerId, key, name: name || 'API Key', status: 'ACTIVE', createdAt: new Date().toISOString() });
+    return res.status(201).json({ id: 'ak_' + Date.now(), customerId: user.customerId, key: rawKey, name: name || 'API Key', status: 'ACTIVE', createdAt: new Date().toISOString() });
   });
 
   app.put('/api/api-keys/:id', requireAuth, async (req: any, res) => {
@@ -3880,29 +3866,31 @@ Based on the current database state, all inventory levels are synced. Let me kno
         const where: any = {};
         if ((user.role || '').toUpperCase() === 'CLIENT') where.customerId = user.customerId;
         const hooks = await prisma.webhookEndpoint.findMany({ where });
-        return res.json(hooks);
+        const masked = hooks.map((h: any) => ({ ...h, secret: '••••••••' }));
+        return res.json(masked);
       } catch (err) { console.error('Prisma webhooks fetch error:', err); }
     }
     res.json([
-      { id: 'wh_1', customerId: 'cust_1', url: 'https://erp.yukon.com/webhook/wms', secret: 'whsec_***', events: 'order.created,order.shipped', status: 'ACTIVE', createdAt: '2026-06-15T08:00:00Z' }
+      { id: 'wh_1', customerId: 'cust_1', url: 'https://erp.yukon.com/webhook/wms', secret: '••••••••', events: 'order.created,order.shipped', status: 'ACTIVE', createdAt: '2026-06-15T08:00:00Z' }
     ]);
   });
 
   app.post('/api/webhooks', requireAuth, async (req: any, res) => {
     const user = req.user;
     const { url, events } = req.body;
-    const secret = 'whsec_' + require('crypto').randomBytes(16).toString('hex');
+    const rawSecret = 'whsec_' + require('crypto').randomBytes(16).toString('hex');
+    const secretHash = await bcrypt.hash(rawSecret, 10);
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const hook = await prisma.webhookEndpoint.create({
-          data: { customerId: user.customerId || '', url, secret, status: 'ACTIVE' }
+          data: { customerId: user.customerId || '', url, secret: secretHash, status: 'ACTIVE' }
         });
-        return res.status(201).json(hook);
+        return res.status(201).json({ ...hook, secret: rawSecret });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
-    return res.status(201).json({ id: 'wh_' + Date.now(), customerId: user.customerId, url, secret, events, status: 'ACTIVE', createdAt: new Date().toISOString() });
+    return res.status(201).json({ id: 'wh_' + Date.now(), customerId: user.customerId, url, secret: rawSecret, events, status: 'ACTIVE', createdAt: new Date().toISOString() });
   });
 
   app.put('/api/webhooks/:id', requireAuth, async (req: any, res) => {
@@ -4238,6 +4226,8 @@ Based on the current database state, all inventory levels are synced. Let me kno
             records.push(record);
           }
         }
+        const ws = getWebSocket();
+        records.forEach((r: any) => ws?.emit('billing.generated', { recordId: r.id, customerId: r.customerId, type: r.type, amount: r.amount }, r.customerId));
         return res.json({ status: 'success', generated: records.length });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -4262,6 +4252,8 @@ Based on the current database state, all inventory levels are synced. Let me kno
             invoices.push(invoice);
           }
         }
+        const ws = getWebSocket();
+        invoices.forEach((inv: any) => ws?.emit('billing.generated', { invoiceId: inv.id, invoiceNo: inv.invoiceNo, customerId: inv.customerId, amount: inv.amount }, inv.customerId));
         return res.json({ status: 'success', generated: invoices.length });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -4446,9 +4438,11 @@ Based on the current database state, all inventory levels are synced. Let me kno
             data: { customerId: inv.customerId, warehouseId, skuId, skuCode: inv.skuCode, type: 'ADJUSTMENT', direction: adjustmentQty >= 0 ? 'IN' : 'OUT', quantity: Math.abs(adjustmentQty), beforeQty, afterQty, reason: reason || 'Manual adjustment' }
           });
         });
+        getWebSocket()?.emit('inventory.adjusted', { skuId, warehouseId, adjustmentQty, reason: reason || 'Manual adjustment' }, req.user.customerId);
         return res.json({ status: 'success', message: 'Inventory adjusted' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
+    getWebSocket()?.emit('inventory.adjusted', { skuId, warehouseId, adjustmentQty, reason: reason || 'Manual adjustment' }, req.user.customerId);
     return res.json({ status: 'success', message: 'Inventory adjusted (Mock)' });
   });
 
@@ -4532,6 +4526,7 @@ Based on the current database state, all inventory levels are synced. Let me kno
         if (!order) return res.status(404).json({ error: 'Order not found' });
         if (order.status !== 'PENDING' && order.status !== 'PICKING') return res.status(400).json({ error: `Cannot pick order in status '${order.status}'` });
         const updated = await prisma.outboundOrder.update({ where: { id: req.params.id }, data: { status: 'PICKING' } });
+        getWebSocket()?.emit('order.status_changed', { orderId: updated.id, orderNo: updated.orderNo, status: 'PICKING' }, updated.customerId);
         return res.json({ status: 'success', order: updated });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -4549,6 +4544,7 @@ Based on the current database state, all inventory levels are synced. Let me kno
         const pkgNo = 'PKG' + String(Date.now()).substring(3, 15);
         await prisma.package.create({ data: { packageNo: pkgNo, orderId: req.params.id } });
         const updated = await prisma.outboundOrder.update({ where: { id: req.params.id }, data: { status: 'REVIEWS' } });
+        getWebSocket()?.emit('order.status_changed', { orderId: updated.id, orderNo: updated.orderNo, status: 'REVIEWS', packageNo: pkgNo }, updated.customerId);
         return res.json({ status: 'success', order: updated, packageNo: pkgNo });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -4883,6 +4879,58 @@ Based on the current database state, all inventory levels are synced. Let me kno
   });
 
   // ==========================================
+  // Adapter Routes (Mock integrations)
+  // ==========================================
+  app.post('/api/adapters/carrier/ship', requireAuth, async (req: any, res) => {
+    try {
+      const result = await carrierAdapter.createShipment(req.body);
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/adapters/carrier/rates', requireAuth, async (req: any, res) => {
+    try {
+      const result = await carrierAdapter.getRates(req.body);
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/adapters/store/sync-orders', requireAuth, async (req: any, res) => {
+    try {
+      const result = await storeAdapter.syncOrders({ ...req.body, customerId: req.user.customerId || '' });
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/adapters/store/sync-products', requireAuth, async (req: any, res) => {
+    try {
+      const result = await storeAdapter.syncProducts({ ...req.body, customerId: req.user.customerId || '' });
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/adapters/store/sync-inventory', requireAuth, async (req: any, res) => {
+    try {
+      const result = await storeAdapter.syncInventory({ ...req.body, customerId: req.user.customerId || '' });
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/adapters/storage/allocate', requireAuth, async (req: any, res) => {
+    try {
+      const result = await storageAdapter.allocateSlot(req.body);
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/adapters/storage/report', requireAuth, async (req: any, res) => {
+    try {
+      const result = await storageAdapter.getUtilizationReport(req.body);
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ==========================================
   // API Error Handling (after all routes)
   // ==========================================
   app.use(notFoundHandler);
@@ -4905,9 +4953,16 @@ Based on the current database state, all inventory levels are synced. Let me kno
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`WMS Express Backend + Vite running on http://localhost:${PORT}`);
   });
+  // Initialize WebSocket for real-time notifications
+  try {
+    initWebSocket(server);
+    console.log('WebSocket server initialized on /ws');
+  } catch (err) {
+    console.warn('WebSocket initialization skipped (non-critical):', err);
+  }
 }
 
 startServer().catch((err) => {

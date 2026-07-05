@@ -42,6 +42,13 @@ export default function IntegrationCenter({ currentUser }: Props) {
   const [newShopName, setNewShopName] = useState('');
   const [testResult, setTestResult] = useState<{ id: string; success: boolean; msg: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [createdKey, setCreatedKey] = useState<{id: string; key: string} | null>(null);
+  const [createdWebhookSecret, setCreatedWebhookSecret] = useState<{id: string; secret: string} | null>(null);
+
+  const maskKey = (key: string) => {
+    if (!key || key.length < 12) return '****';
+    return key.substring(0, 8) + '****' + key.substring(key.length - 4);
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -59,7 +66,11 @@ export default function IntegrationCenter({ currentUser }: Props) {
 
   const handleCreateKey = async () => {
     if (!newKeyName) return;
-    await apiKeyApi.createKey({ name: newKeyName });
+    const result = await apiKeyApi.createKey({ name: newKeyName });
+    if (result && result.key) {
+      setCreatedKey({ id: result.id, key: result.key });
+      setTimeout(() => setCreatedKey(null), 30000);
+    }
     setShowCreateKey(false); setNewKeyName(''); loadData();
   };
 
@@ -82,7 +93,11 @@ export default function IntegrationCenter({ currentUser }: Props) {
 
   const handleCreateWebhook = async () => {
     if (!newWebhookUrl) return;
-    await webhookApi.createWebhook({ url: newWebhookUrl, events: newWebhookEvents.join(',') });
+    const result = await webhookApi.createWebhook({ url: newWebhookUrl, events: newWebhookEvents.join(',') });
+    if (result && result.secret) {
+      setCreatedWebhookSecret({ id: result.id, secret: result.secret });
+      setTimeout(() => setCreatedWebhookSecret(null), 30000);
+    }
     setShowCreateWebhook(false); setNewWebhookUrl(''); loadData();
   };
 
@@ -167,7 +182,14 @@ export default function IntegrationCenter({ currentUser }: Props) {
                       {apiKeys.map((k: any, i: number) => (
                         <tr key={k.id} className={i % 2 ? 'bg-gray-50' : 'bg-white'}>
                           <td className="px-4 py-3 font-medium">{k.name || 'API Key'}</td>
-                          <td className="px-4 py-3 font-mono text-xs flex items-center gap-2">{k.key.substring(0, 12)}...<button onClick={() => handleCopyKey(k.key)} className="text-blue-500 hover:text-blue-700">{copiedKey === k.key ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></td>
+                          <td className="px-4 py-3 font-mono text-xs flex items-center gap-2">
+                            {createdKey?.id === k.id ? (
+                              <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-bold">{createdKey.key}</span>
+                            ) : (
+                              <span className="text-gray-400">{maskKey(k.key)}</span>
+                            )}
+                            {createdKey?.id === k.id && <span className="text-[10px] text-green-600 font-medium">密钥已创建，请立即复制保存，关闭后将不再显示</span>}
+                          </td>
                           <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs ${k.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{k.status}</span></td>
                           <td className="px-4 py-3 text-gray-500">{new Date(k.createdAt).toLocaleDateString()}</td>
                           <td className="px-4 py-3 text-right space-x-2">
@@ -217,7 +239,7 @@ export default function IntegrationCenter({ currentUser }: Props) {
                       {webhooks.map((w: any, i: number) => (
                         <tr key={w.id} className={i % 2 ? 'bg-gray-50' : 'bg-white'}>
                           <td className="px-4 py-3 font-mono text-xs">{w.url}</td>
-                          <td className="px-4 py-3 font-mono text-xs">{w.secret}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-400">{createdWebhookSecret?.id === w.id ? <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-bold">{createdWebhookSecret.secret}</span> : '••••••••'}</td>
                           <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs ${w.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{w.status}</span></td>
                           <td className="px-4 py-3 text-right space-x-2">
                             {testResult?.id === w.id && <span className={`text-xs ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>{testResult.msg}</span>}

@@ -15,7 +15,12 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "db:init": "npm run prisma:generate && npm run prisma:push && npm run prisma:seed",
     "test:smoke": "tsx scripts/smoke-test.ts",
-    "test:functions": "tsx scripts/full-function-check.ts"
+    "test:functions": "tsx scripts/full-function-check.ts",
+    "test:unit": "vitest run",
+    "test:api": "tsx scripts/smoke-test.ts",
+    "test:e2e": "tsx scripts/full-function-check.ts",
+    "test:all": "vitest run && tsx scripts/smoke-test.ts && tsx scripts/full-function-check.ts",
+    "prisma:migrate:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -33,7 +38,8 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^6.2.3",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "ws": "^8.18.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -47,6 +53,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "vitest": "^3.1.1"
   }
 }

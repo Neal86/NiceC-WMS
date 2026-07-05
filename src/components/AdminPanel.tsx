@@ -654,6 +654,10 @@ function WarehouseManagement() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [address, setAddress] = useState('');
+  const [editingWh, setEditingWh] = useState<any>(null);
+  const [editName, setEditName] = useState('');
+  const [editCode, setEditCode] = useState('');
+  const [editAddress, setEditAddress] = useState('');
 
   const fetchWarehouses = async () => {
     try {
@@ -676,6 +680,27 @@ function WarehouseManagement() {
     setName('');
     setCode('');
     setAddress('');
+    await fetchWarehouses();
+  };
+
+  const handleEdit = (wh: any) => {
+    setEditingWh(wh);
+    setEditName(wh.name);
+    setEditCode(wh.code);
+    setEditAddress(wh.address);
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWh || !editName || !editCode || !editAddress) return;
+    await warehouseApi.updateWarehouse(editingWh.id, { name: editName, code: editCode, address: editAddress });
+    setEditingWh(null);
+    await fetchWarehouses();
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('确定要删除该仓库吗？此操作不可撤销。')) return;
+    await warehouseApi.deleteWarehouse(id);
     await fetchWarehouses();
   };
 
@@ -754,6 +779,33 @@ function WarehouseManagement() {
         </form>
       )}
 
+      {editingWh && (
+        <form onSubmit={handleUpdate} className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
+          <h4 className="text-xs font-bold text-amber-700 flex items-center gap-1.5 pb-2 border-b border-amber-100">
+            <Edit className="w-4 h-4 text-amber-600" />
+            <span>编辑仓库: {editingWh.name}</span>
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">仓库设施名称 *</label>
+              <input type="text" required placeholder="名称前缀及地区标志" value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">识别编码 *</label>
+              <input type="text" required placeholder="ZIP Code e.g. 75001" value={editCode} onChange={e => setEditCode(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">物理详情地址 *</label>
+              <input type="text" required placeholder="精确物理设施地址" value={editAddress} onChange={e => setEditAddress(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setEditingWh(null)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs">取消</button>
+            <button type="submit" className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-bold text-xs">保存修改</button>
+          </div>
+        </form>
+      )}
+
       {loading ? (
         <div className="text-center py-8 text-xs text-slate-400">加载中...</div>
       ) : (
@@ -777,6 +829,10 @@ function WarehouseManagement() {
                 <div><strong className="text-slate-600">地址:</strong> {wh.address}</div>
               </div>
             </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button onClick={() => handleEdit(wh)} className="text-[10px] font-bold px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors">编辑</button>
+              <button onClick={() => handleDelete(wh.id)} className="text-[10px] font-bold px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors">删除</button>
+            </div>
           </div>
         ))}
       </div>
@@ -796,6 +852,11 @@ function CustomerManagement() {
   const [code, setCode] = useState('');
   const [contact, setContact] = useState('');
   const [email, setEmail] = useState('');
+  const [editingCust, setEditingCust] = useState<any>(null);
+  const [editName, setEditName] = useState('');
+  const [editCode, setEditCode] = useState('');
+  const [editContact, setEditContact] = useState('');
+  const [editEmail, setEditEmail] = useState('');
 
   const fetchCustomers = async () => {
     try {
@@ -819,6 +880,28 @@ function CustomerManagement() {
     setCode('');
     setContact('');
     setEmail('');
+    await fetchCustomers();
+  };
+
+  const handleEdit = (cust: any) => {
+    setEditingCust(cust);
+    setEditName(cust.name);
+    setEditCode(cust.code);
+    setEditContact(cust.contact || '');
+    setEditEmail(cust.email || '');
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCust || !editName || !editCode) return;
+    await customerApi.updateCustomer(editingCust.id, { name: editName, code: editCode, contact: editContact, email: editEmail });
+    setEditingCust(null);
+    await fetchCustomers();
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('确定要删除该客户吗？此操作不可撤销。')) return;
+    await customerApi.deleteCustomer(id);
     await fetchCustomers();
   };
 
@@ -906,6 +989,37 @@ function CustomerManagement() {
         </form>
       )}
 
+      {editingCust && (
+        <form onSubmit={handleUpdate} className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
+          <h4 className="text-xs font-bold text-amber-700 flex items-center gap-1.5 pb-2 border-b border-amber-100">
+            <Edit className="w-4 h-4 text-amber-600" />
+            <span>编辑客户: {editingCust.name}</span>
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">商户全称 *</label>
+              <input type="text" required placeholder="客户中文或英文全名" value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">商户简称 / 结算识别码 *</label>
+              <input type="text" required placeholder="eg: Yukon(1108037)" value={editCode} onChange={e => setEditCode(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">首要联系人</label>
+              <input type="text" placeholder="联系人中文姓名" value={editContact} onChange={e => setEditContact(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">联系人通知 Email</label>
+              <input type="email" placeholder="billing@customer.com" value={editEmail} onChange={e => setEditEmail(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setEditingCust(null)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs">取消</button>
+            <button type="submit" className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-bold text-xs">保存修改</button>
+          </div>
+        </form>
+      )}
+
       {loading ? (
         <div className="text-center py-8 text-xs text-slate-400">加载中...</div>
       ) : (
@@ -919,6 +1033,7 @@ function CustomerManagement() {
               <th className="px-4 py-2.5">电子邮箱</th>
               <th className="px-4 py-2.5">入驻时间</th>
               <th className="px-4 py-2.5">签约状态</th>
+              <th className="px-4 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -934,6 +1049,12 @@ function CustomerManagement() {
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                     合作中
                   </span>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => handleEdit(cust)} className="border border-blue-200 text-blue-600 hover:bg-blue-50 text-[10px] font-bold px-2 py-1 rounded transition-colors">编辑</button>
+                    <button onClick={() => handleDelete(cust.id)} className="border border-red-200 text-red-500 hover:bg-red-50 text-[10px] font-bold px-2 py-1 rounded transition-colors">删除</button>
+                  </div>
                 </td>
               </tr>
             ))}

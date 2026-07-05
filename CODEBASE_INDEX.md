@@ -17,7 +17,7 @@
 ### `/` Root
 | File | Purpose |
 |------|---------|
-| `server.ts` | Single-file Express server: ALL routes, middleware, business logic (~4476 lines) |
+| `server.ts` | Single-file Express server: ALL routes, middleware, business logic (~4950 lines) |
 | `server-bootstrap.ts` | Server entry point (loads env, starts server) |
 | `package.json` | Dependencies and scripts |
 | `tsconfig.json` | TypeScript config |
@@ -27,6 +27,15 @@
 | `docker-compose.yml` | Docker Compose |
 | `entrypoint.sh` | Docker entrypoint |
 
+### `/tests/` - Unit Tests
+| File | Purpose |
+|------|---------|
+| `tests/permissions.test.ts` | RBAC, role normalization, customerId isolation tests |
+| `tests/auth.test.ts` | Login validation, demo guard, token payload, password hashing |
+| `tests/inventory.test.ts` | Stock reservation/release/ship/return restock/adjustment |
+| `tests/billing.test.ts` | Rule CRUD, record generation, invoice generation, client isolation |
+| `tests/api-key-masking.test.ts` | Key hashing, masking, webhook secret security |
+
 ### `/server/` - Backend Helpers
 | File | Purpose |
 |------|---------|
@@ -35,6 +44,12 @@
 | `server/validation.ts` | Zod schemas for all request bodies |
 | `server/db.ts` | JSON file fallback DB (for dev without PostgreSQL) |
 | `server/prisma.ts` | Prisma client singleton with connection check |
+| `server/websocket.ts` | WebSocket server: JWT auth, room-based (admin/warehouse/client:{id}) broadcasting |
+| `server/ai-assistant.ts` | OpenAI-compatible AI assistant: OPENAI_API_KEY, fallback to static responses |
+| `server/adapters/CarrierAdapter.ts` | Mock carrier integration (FedEx/UPS/USPS) |
+| `server/adapters/StoreAdapter.ts` | Mock store integration (Amazon/Shopify/Walmart) |
+| `server/adapters/StorageAdapter.ts` | Mock storage/3PL integration |
+| `server/adapters/index.ts` | Adapter exports |
 
 ### `/prisma/` - Database Schema
 | File | Purpose |
@@ -243,19 +258,49 @@ Added `requireRole` to sensitive routes:
 - Invalid state transitions return 400 with clear error message
 - Weight validation (> 0) in weigh-package route
 
-### P0-7 (In Progress)
-- Admin routes implemented in server.ts
-- User/Customer/Warehouse CRUD complete with DB persistence
+### P0-7 (Completed)
+- User Management: full CRUD (create, toggle status, delete)
+- Customer Management: full CRUD (added edit inline form + delete with confirm)
+- Warehouse Management: full CRUD (added edit inline form + delete with confirm)
+- All use real API calls via `customerApi`/`warehouseApi`/`userApi`
 
-### P0-8 (Not Started)
-- Billing rule/record/invoice models need field expansion
-- Automated billing generation on warehouse ops
+### P0-8 (Completed)
+- BillingView: added rules management tab (CRUD) for Admin/Super Admin
+- "Generate Records" and "Generate Invoice" buttons for Admin
+- Rules tab: create/edit/delete with inline form
+- Backend billing rules CRUD, records/invoices generate already existed
 
-### P0-9 (Not Started)
-- API key hash, masking
-- Webhook secret hash, masking
-- Store connection secret masking
+### P0-9 (Completed)
+- API Key: bcrypt hash, raw key returned only on creation
+- API Key list: masked (e.g. `nwc_ab****ef45`)
+- Webhook secret: bcrypt hash, raw secret returned only on creation
+- Webhook list: always shows `••••••••`
+- IntegrationCenter: masked keys/secrets, raw shown only once with 30s timeout
+- Store connection sync routes (test/sync-orders/sync-products/sync-inventory)
 
-### P0-10 (Not Started)
-- Need to add unit tests
-- Smoke test and function check scripts exist
+### P0-10 (Completed - Pending npm install)
+- vitest config (`vitest.config.ts`)
+- Unit tests: permissions, auth, inventory, billing, API key masking (5 test files)
+- GitHub Actions CI (`.github/workflows/ci.yml`)
+- package.json scripts: test:unit, test:api, test:e2e, test:all, prisma:migrate:deploy
+- ⚠️ `npm install` blocked by Chinese characters in workspace path
+
+### P1-1 (Completed)
+- AI Assistant: OpenAI-compatible API (OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, LLM_TIMEOUT_MS)
+- Falls back to static responses when no API key configured
+- Client data isolated by customerId, role context in system prompt
+- API key never returned to frontend
+
+### P1-2 (Completed)
+- WebSocket server (`server/websocket.ts`) with JWT auth
+- Rooms: admin, warehouse, client:{customerId}
+- Events: order.status_changed, inventory.adjusted, return.received, billing.generated, feedback.created
+- Client only sees own customerId events
+- Non-blocking if WebSocket unavailable
+- Notifications added to pick/pack/ship/cancel/inventory-adjust/billing-generate
+
+### P1-3 (Completed)
+- Adapter architecture (`server/adapters/`)
+- CarrierAdapter, StoreAdapter, StorageAdapter (mock implementations)
+- Routes: POST /api/adapters/carrier/ship|rates, /store/sync-*, /storage/allocate|report
+- Integration Center delegates to adapters, no mock logic in pages
