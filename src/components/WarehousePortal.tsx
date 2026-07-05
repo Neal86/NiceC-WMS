@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import api, { authApi, inventoryApi, outboundApi, logApi, inboundApi, putawayApi, pickApi, reviewApi, returnApi, exceptionApi } from '../api';
+import api, { authApi, inventoryApi, outboundApi, logApi, inboundApi, putawayApi, pickApi, reviewApi, returnApi, exceptionApi, relabelApi, locationApi } from '../api';
 import { WMSAIWidget } from './wms-ai-assistant/WMSAIWidget';
 import { 
   Package, ClipboardList, Truck, RotateCcw, AlertTriangle, 
   CheckCircle2, Clock, LogOut, Warehouse as WarehouseIcon,
   ArrowDownToLine, ArrowUpFromLine, PackageCheck, FileText,
-  RefreshCw, Loader2, Inbox
+  RefreshCw, Loader2, Inbox, Scale, Tags, MapPin
 } from 'lucide-react';
 
 interface WarehousePortalProps {
@@ -56,6 +56,25 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
   // Logs tab state
   const [operationLogs, setOperationLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+
+  // Packing tab state
+  const [packingOrders, setPackingOrders] = useState<any[]>([]);
+  const [packingLoading, setPackingLoading] = useState(false);
+
+  // Weighing tab state
+  const [weighingOrders, setWeighingOrders] = useState<any[]>([]);
+  const [weighingLoading, setWeighingLoading] = useState(false);
+  const [weighInputs, setWeighInputs] = useState<Record<string, { weight: number; length: number; width: number; height: number }>>({});
+
+  // Relabel tab state
+  const [relabelOrders, setRelabelOrders] = useState<any[]>([]);
+  const [relabelLoading, setRelabelLoading] = useState(false);
+
+  // Location Adjustment tab state
+  const [locations, setLocations] = useState<any[]>([]);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [showAddLocation, setShowAddLocation] = useState(false);
+  const [newLocationCode, setNewLocationCode] = useState('');
 
   useEffect(() => {
     loadDashboardData();
@@ -261,6 +280,106 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
     }
   }, []);
 
+  // Packing tab functions
+  const loadPackingOrders = useCallback(async () => {
+    setPackingLoading(true);
+    try {
+      const res = await outboundApi.getOrders({ tab: 'PICKING', page: 1, pageSize: 100 });
+      setPackingOrders(res.orders || []);
+    } catch (err) {
+      console.error('Failed to load packing orders', err);
+      setPackingOrders([]);
+    } finally {
+      setPackingLoading(false);
+    }
+  }, []);
+
+  const handlePackComplete = async (orderId: string) => {
+    try {
+      await api.post(`/outbound-orders/${orderId}/ship`);
+      await loadPackingOrders();
+    } catch (err) {
+      console.error('Failed to pack order', err);
+    }
+  };
+
+  // Weighing tab functions
+  const loadWeighingOrders = useCallback(async () => {
+    setWeighingLoading(true);
+    try {
+      const res = await outboundApi.getOrders({ tab: 'SHIPPING', page: 1, pageSize: 100 });
+      setWeighingOrders(res.orders || []);
+    } catch (err) {
+      console.error('Failed to load weighing orders', err);
+      setWeighingOrders([]);
+    } finally {
+      setWeighingLoading(false);
+    }
+  }, []);
+
+  const handleWeigh = async (orderId: string) => {
+    const input = weighInputs[orderId];
+    if (!input || !input.weight) return;
+    try {
+      await api.post(`/outbound-orders/${orderId}/weigh-package`, input);
+      const newInputs = { ...weighInputs };
+      delete newInputs[orderId];
+      setWeighInputs(newInputs);
+      await loadWeighingOrders();
+    } catch (err) {
+      console.error('Failed to weigh package', err);
+    }
+  };
+
+  // Relabel tab functions
+  const loadRelabelOrders = useCallback(async () => {
+    setRelabelLoading(true);
+    try {
+      const data = await relabelApi.getOrders();
+      setRelabelOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load relabel orders', err);
+      setRelabelOrders([]);
+    } finally {
+      setRelabelLoading(false);
+    }
+  }, []);
+
+  const handleRelabelComplete = async (orderId: string) => {
+    try {
+      await relabelApi.complete(orderId);
+      await loadRelabelOrders();
+    } catch (err) {
+      console.error('Failed to complete relabel order', err);
+    }
+  };
+
+  // Location Adjustment tab functions
+  const loadLocations = useCallback(async () => {
+    setLocationLoading(true);
+    try {
+      const data = await locationApi.getLocations();
+      setLocations(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load locations', err);
+      setLocations([]);
+    } finally {
+      setLocationLoading(false);
+    }
+  }, []);
+
+  const handleAddLocation = async () => {
+    if (!newLocationCode.trim()) return;
+    try {
+      await locationApi.create({ code: newLocationCode, warehouseId: 'wh_1' });
+      setNewLocationCode('');
+      setShowAddLocation(false);
+      await loadLocations();
+    } catch (err) {
+      console.error('Failed to add location', err);
+    }
+  };
+
   // Load data when tab changes
   useEffect(() => {
     if (activeTab === 'receiving') {
@@ -279,8 +398,16 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
       loadExceptionCases();
     } else if (activeTab === 'logs') {
       loadOperationLogs();
+    } else if (activeTab === 'packing') {
+      loadPackingOrders();
+    } else if (activeTab === 'weighing') {
+      loadWeighingOrders();
+    } else if (activeTab === 'relabel') {
+      loadRelabelOrders();
+    } else if (activeTab === 'location-adjust') {
+      loadLocations();
     }
-  }, [activeTab, loadReceivingOrders, loadPutawayTasks, loadPickTasks, loadReviewTasks, loadShippingOrders, loadReturnOrders, loadExceptionCases, loadOperationLogs]);
+  }, [activeTab, loadReceivingOrders, loadPutawayTasks, loadPickTasks, loadReviewTasks, loadShippingOrders, loadReturnOrders, loadExceptionCases, loadOperationLogs, loadPackingOrders, loadWeighingOrders, loadRelabelOrders, loadLocations]);
 
   const statCards = [
     { label: '今日待收货', value: stats.todayInbound, icon: ArrowDownToLine, color: 'bg-blue-500' },
@@ -294,7 +421,9 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
     { label: '入库收货', icon: ArrowDownToLine, color: 'bg-blue-600', tab: 'receiving' },
     { label: '上架任务', icon: ArrowUpFromLine, color: 'bg-indigo-600', tab: 'putaway' },
     { label: '拣货任务', icon: Package, color: 'bg-amber-600', tab: 'picking' },
-    { label: '打包复核', icon: PackageCheck, color: 'bg-purple-600', tab: 'review' },
+    { label: '打包作业', icon: PackageCheck, color: 'bg-purple-600', tab: 'packing' },
+    { label: '称重录入', icon: Scale, color: 'bg-teal-600', tab: 'weighing' },
+    { label: '打包复核', icon: ClipboardList, color: 'bg-violet-600', tab: 'review' },
     { label: '退货收货', icon: RotateCcw, color: 'bg-rose-600', tab: 'returns' },
     { label: '异常处理', icon: AlertTriangle, color: 'bg-red-600', tab: 'exceptions' },
   ];
@@ -378,8 +507,12 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
             { key: 'receiving', label: '入库收货', icon: ArrowDownToLine },
             { key: 'putaway', label: '上架管理', icon: ArrowUpFromLine },
             { key: 'picking', label: '拣货任务', icon: Package },
-            { key: 'review', label: '打包复核', icon: PackageCheck },
+            { key: 'packing', label: '打包作业', icon: PackageCheck },
+            { key: 'weighing', label: '称重录入', icon: Scale },
+            { key: 'review', label: '打包复核', icon: ClipboardList },
             { key: 'shipping', label: '出库复核', icon: Truck },
+            { key: 'relabel', label: '换标管理', icon: Tags },
+            { key: 'location-adjust', label: '库位调整', icon: MapPin },
             { key: 'returns', label: '退货收货', icon: RotateCcw },
             { key: 'exceptions', label: '异常件处理', icon: AlertTriangle },
             { key: 'logs', label: '操作记录', icon: FileText },
@@ -735,6 +868,132 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
                            标记解决
                          </button>
                        )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Packing Tab */}
+          {activeTab === 'packing' && (
+            <div>
+              {renderTabHeader('打包作业', loadPackingOrders)}
+              {packingLoading ? renderLoading() :
+               packingOrders.length === 0 ? renderEmpty('暂无待打包订单') :
+               renderTable(['订单号', '收件人', 'SKU数', '总件数', '状态', '操作'],
+                 packingOrders.map((order: any, idx: number) => (
+                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.recipient || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.items?.length || 0}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.totalQty || '-'}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>{order.status}</span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {order.status === 'PICKING' && (
+                         <button onClick={() => handlePackComplete(order.id)} className="px-3 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors">完成打包</button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Weighing Tab */}
+          {activeTab === 'weighing' && (
+            <div>
+              {renderTabHeader('称重录入', loadWeighingOrders)}
+              {weighingLoading ? renderLoading() :
+               weighingOrders.length === 0 ? renderEmpty('暂无待称重订单') :
+               renderTable(['订单号', '收件人', '承运商', '重量(kg)', '长/宽/高(cm)', '操作'],
+                 weighingOrders.map((order: any, idx: number) => {
+                   const input = weighInputs[order.id] || { weight: 0, length: 0, width: 0, height: 0 };
+                   return (
+                     <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                       <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
+                       <td className="px-4 py-3 text-slate-600">{order.recipient || '-'}</td>
+                       <td className="px-4 py-3 text-slate-600">{order.carrierName || '-'}</td>
+                       <td className="px-4 py-3">
+                         <input type="number" step="0.1" min="0" placeholder="kg" value={input.weight || ''}
+                           onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], weight: Number(e.target.value), length: prev[order.id]?.length || 0, width: prev[order.id]?.width || 0, height: prev[order.id]?.height || 0 } }))}
+                           className="w-20 px-2 py-1 border border-slate-200 rounded text-sm" />
+                       </td>
+                       <td className="px-4 py-3">
+                         <div className="flex gap-1">
+                           <input type="number" step="0.1" min="0" placeholder="长" value={input.length || ''} onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], length: Number(e.target.value) } }))} className="w-14 px-1 py-1 border border-slate-200 rounded text-sm" />
+                           <input type="number" step="0.1" min="0" placeholder="宽" value={input.width || ''} onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], width: Number(e.target.value) } }))} className="w-14 px-1 py-1 border border-slate-200 rounded text-sm" />
+                           <input type="number" step="0.1" min="0" placeholder="高" value={input.height || ''} onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], height: Number(e.target.value) } }))} className="w-14 px-1 py-1 border border-slate-200 rounded text-sm" />
+                         </div>
+                       </td>
+                       <td className="px-4 py-3">
+                         <button onClick={() => handleWeigh(order.id)} disabled={!input.weight} className="px-3 py-1 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors">保存称重</button>
+                       </td>
+                     </tr>
+                   );
+                 })
+               )
+              }
+            </div>
+          )}
+
+          {/* Relabel Tab */}
+          {activeTab === 'relabel' && (
+            <div>
+              {renderTabHeader('换标管理', loadRelabelOrders)}
+              {relabelLoading ? renderLoading() :
+               relabelOrders.length === 0 ? renderEmpty('暂无换标任务') :
+               renderTable(['换标单号', '旧SKU', '新SKU', '数量', '状态', '操作'],
+                 relabelOrders.map((order: any, idx: number) => (
+                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.oldSkuCode || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.newSkuCode || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{order.quantity}</td>
+                     <td className="px-4 py-3">
+                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>{order.status}</span>
+                     </td>
+                     <td className="px-4 py-3">
+                       {order.status === 'PENDING' && (
+                         <button onClick={() => handleRelabelComplete(order.id)} className="px-3 py-1 text-xs font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">完成换标</button>
+                       )}
+                     </td>
+                   </tr>
+                 ))
+               )
+              }
+            </div>
+          )}
+
+          {/* Location Adjustment Tab */}
+          {activeTab === 'location-adjust' && (
+            <div>
+              {renderTabHeader('库位调整', () => { loadLocations(); setShowAddLocation(true); })}
+              {showAddLocation && (
+                <div className="mb-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex gap-3 items-end">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">新增库位编码</label>
+                    <input value={newLocationCode} onChange={e => setNewLocationCode(e.target.value)} placeholder="例: ZONE-A-1-1" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+                  </div>
+                  <button onClick={handleAddLocation} className="px-4 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">添加</button>
+                  <button onClick={() => { setShowAddLocation(false); setNewLocationCode(''); }} className="px-4 py-2 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">取消</button>
+                </div>
+              )}
+              {locationLoading ? renderLoading() :
+               locations.length === 0 ? renderEmpty('暂无库位数据') :
+               renderTable(['库位编码', '仓库', '区域', '创建时间', '操作'],
+                 locations.map((loc: any, idx: number) => (
+                   <tr key={loc.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                     <td className="px-4 py-3 font-medium text-slate-800 font-mono">{loc.code}</td>
+                     <td className="px-4 py-3 text-slate-600">{loc.warehouseId || loc.warehouseName || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{loc.zoneCode || '-'}</td>
+                     <td className="px-4 py-3 text-slate-600">{loc.createdAt ? new Date(loc.createdAt).toLocaleDateString('zh-CN') : '-'}</td>
+                     <td className="px-4 py-3">
+                       <button className="px-3 py-1 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">编辑</button>
                      </td>
                    </tr>
                  ))

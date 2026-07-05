@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import api, { 
   authApi, outboundApi, metadataApi, skuApi, inventoryApi, customerApi
 } from '../api';
 import { 
@@ -32,6 +32,12 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
   const [tickets, setTickets] = useState<any[]>([]);
   const [newTicket, setNewTicket] = useState({ title: '', type: 'Bug Report', description: '' });
   const [showNewTicketModal, setShowNewTicketModal] = useState(false);
+  const [showCreateOutbound, setShowCreateOutbound] = useState(false);
+  const [showCreateASN, setShowCreateASN] = useState(false);
+  const [outboundForm, setOutboundForm] = useState({ recipient: '', logisticsChannelId: '', carrierId: '', items: [{ skuId: '', skuCode: '', qty: 1 }] });
+  const [asnForm, setAsnForm] = useState({ warehouseId: 'wh_1', remark: '', items: [{ skuId: '', skuCode: '', qtyExpected: 10 }] });
+  const [carriers, setCarriers] = useState<any[]>([]);
+  const [channels, setChannels] = useState<any[]>([]);
 
   // Load isolated data on render
   useEffect(() => {
@@ -62,6 +68,12 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
           const isolatedTickets = ticketsData.filter((t: any) => t.customerId === currentUser.customerId || t.userId === currentUser.id);
           setTickets(isolatedTickets);
         }
+
+        // Fetch carriers & channels for order forms
+        const metaCarr = await metadataApi.getCarriers();
+        const metaChan = await metadataApi.getLogisticsChannels();
+        setCarriers(metaCarr);
+        setChannels(metaChan);
       } catch (err) {
         console.error('Error fetching isolated customer data:', err);
       } finally {
@@ -389,7 +401,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
                   <h3 className="text-sm font-bold text-slate-200">入库预报 ASN Forecast</h3>
                   <p className="text-xs text-slate-400 mt-1">发货至 NiceC 仓库前，创建入库预报并提供条码。到仓后进行拆柜与上架扣减。</p>
                 </div>
-                <button onClick={() => alert('请提交箱规和托盘信息录入入库预报 (ASN)')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer">
+                <button onClick={() => setShowCreateASN(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer">
                   <Plus className="w-3.5 h-3.5" />
                   <span>新建入库预报</span>
                 </button>
@@ -443,7 +455,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
                   <h3 className="text-sm font-bold text-slate-200">出库订单 Outbound Orders</h3>
                   <p className="text-xs text-slate-400 mt-1">您关联的专属一件代发出库需求列表。</p>
                 </div>
-                <button onClick={() => alert('请使用顶部或导入接口同步外部 ERP 订单...')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer">
+                <button onClick={() => setShowCreateOutbound(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer">
                   <Plus className="w-3.5 h-3.5" />
                   <span>手动创建发货单</span>
                 </button>
@@ -652,6 +664,44 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
               </p>
               <div className="mt-6 border-t border-slate-800 pt-4 text-xs text-slate-500 font-mono">
                 数据安全认证证书已就绪。
+              </div>
+            </div>
+          )}
+
+          {/* Create Outbound Order Modal */}
+          {showCreateOutbound && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                  <h3 className="text-sm font-bold text-slate-200">创建出库单</h3>
+                  <button onClick={() => setShowCreateOutbound(false)} className="p-1 hover:bg-slate-800 rounded text-slate-400">✕</button>
+                </div>
+                <form onSubmit={async (e) => { e.preventDefault(); try { await outboundApi.createOrder(outboundForm); setShowCreateOutbound(false); alert('出库单创建成功'); } catch (err) { alert('创建失败'); } }} className="p-5 space-y-4 text-xs">
+                  <div><label className="block text-slate-400 mb-1">收件人</label><input required value={outboundForm.recipient} onChange={e => setOutboundForm(f => ({...f, recipient: e.target.value}))} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><label className="block text-slate-400 mb-1">承运商</label><select required value={outboundForm.carrierId} onChange={e => setOutboundForm(f => ({...f, carrierId: e.target.value}))} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200">{carriers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                    <div><label className="block text-slate-400 mb-1">物流渠道</label><select required value={outboundForm.logisticsChannelId} onChange={e => setOutboundForm(f => ({...f, logisticsChannelId: e.target.value}))} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200">{channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                  </div>
+                  <div><label className="block text-slate-400 mb-1">SKU 明细</label>{outboundForm.items.map((item, i) => <div key={i} className="flex gap-2 mb-1"><input placeholder="SKU ID" value={item.skuId} onChange={e => { const items = [...outboundForm.items]; items[i] = {...items[i], skuId: e.target.value}; setOutboundForm(f => ({...f, items})); }} className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /><input type="number" min="1" value={item.qty} onChange={e => { const items = [...outboundForm.items]; items[i] = {...items[i], qty: Number(e.target.value)}; setOutboundForm(f => ({...f, items})); }} className="w-20 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /></div>)}<button type="button" onClick={() => setOutboundForm(f => ({...f, items: [...f.items, { skuId: '', skuCode: '', qty: 1 }]}))} className="text-blue-400 hover:text-blue-300 mt-1">+ 添加 SKU</button></div>
+                  <div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setShowCreateOutbound(false)} className="px-4 py-2 border border-slate-700 rounded text-slate-400 hover:bg-slate-800">取消</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 font-bold">提交</button></div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Create ASN Modal */}
+          {showCreateASN && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                  <h3 className="text-sm font-bold text-slate-200">创建入库预报 ASN</h3>
+                  <button onClick={() => setShowCreateASN(false)} className="p-1 hover:bg-slate-800 rounded text-slate-400">✕</button>
+                </div>
+                <form onSubmit={async (e) => { e.preventDefault(); try { await api.post('/inbound-orders', asnForm); setShowCreateASN(false); alert('ASN 创建成功'); } catch (err) { alert('创建失败'); } }} className="p-5 space-y-4 text-xs">
+                  <div><label className="block text-slate-400 mb-1">备注</label><input value={asnForm.remark} onChange={e => setAsnForm(f => ({...f, remark: e.target.value}))} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /></div>
+                  <div><label className="block text-slate-400 mb-1">SKU 明细</label>{asnForm.items.map((item, i) => <div key={i} className="flex gap-2 mb-1"><input placeholder="SKU ID" value={item.skuId} onChange={e => { const items = [...asnForm.items]; items[i] = {...items[i], skuId: e.target.value}; setAsnForm(f => ({...f, items})); }} className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /><input placeholder="SKU Code" value={item.skuCode} onChange={e => { const items = [...asnForm.items]; items[i] = {...items[i], skuCode: e.target.value}; setAsnForm(f => ({...f, items})); }} className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /><input type="number" min="1" value={item.qtyExpected} onChange={e => { const items = [...asnForm.items]; items[i] = {...items[i], qtyExpected: Number(e.target.value)}; setAsnForm(f => ({...f, items})); }} className="w-20 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-200" /></div>)}<button type="button" onClick={() => setAsnForm(f => ({...f, items: [...f.items, { skuId: '', skuCode: '', qtyExpected: 10 }]}))} className="text-blue-400 hover:text-blue-300 mt-1">+ 添加 SKU</button></div>
+                  <div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setShowCreateASN(false)} className="px-4 py-2 border border-slate-700 rounded text-slate-400 hover:bg-slate-800">取消</button><button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 font-bold">提交</button></div>
+                </form>
               </div>
             </div>
           )}

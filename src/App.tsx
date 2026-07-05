@@ -8,6 +8,7 @@ import FilterSection from './components/FilterSection';
 import OrderTable from './components/OrderTable';
 import OrderDetailModal from './components/OrderDetailModal';
 import OrderFormModal from './components/OrderFormModal';
+import BulkImportModal from './components/BulkImportModal';
 import Dashboard from './components/Dashboard';
 import WavesManager from './components/WavesManager';
 import LabelManager from './components/LabelManager';
@@ -73,6 +74,7 @@ export default function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedEditOrder, setSelectedEditOrder] = useState<OutboundOrder | null>(null);
   const [selectedDetailOrder, setSelectedDetailOrder] = useState<OutboundOrder | null>(null);
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   
   // Custom notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -472,11 +474,11 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => alert('请选择需要导入的一件代发 Excel 订单模版。')}
+                  onClick={() => setIsBulkImportOpen(true)}
                   className="h-6.5 px-2.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded font-semibold flex items-center gap-0.5 cursor-pointer"
                 >
-                  <span>导入</span>
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-blue-500" />
+                  <span>批量导入</span>
                 </button>
 
                 <button
@@ -615,6 +617,11 @@ export default function App() {
           }}
           onSave={handleSaveOrder}
         />
+      )}
+
+      {/* Bulk Import Modal */}
+      {isBulkImportOpen && (
+        <BulkImportModal onClose={() => setIsBulkImportOpen(false)} />
       )}
 
       {/* Global WMS AI Assistant Widget */}

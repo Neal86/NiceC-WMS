@@ -113,6 +113,14 @@ export const outboundApi = {
   importOrders: async (rows?: unknown[]) => {
     const response = await api.post('/outbound-orders/import', { rows: rows || [] });
     return response.data;
+  },
+  bulkImport: async (rows: Array<{orderNo: string; recipientName: string; address: string; phone: string; skuCode: string; qty: number; logisticsChannel: string}>) => {
+    const response = await api.post('/outbound-orders/import', { rows });
+    return response.data;
+  },
+  getImportHistory: async () => {
+    const response = await api.get('/outbound-orders/import-history');
+    return response.data;
   }
 };
 
@@ -538,6 +546,51 @@ export const exceptionApi = {
   },
   resolve: async (caseId: string) => {
     const response = await api.post(`/exception-cases/${caseId}/resolve`);
+    return response.data;
+  }
+};
+
+export const userApi = {
+  getUsers: async () => {
+    const response = await api.get('/users');
+    return response.data;
+  },
+  createUser: async (data: any) => {
+    const response = await api.post('/users', data);
+    return response.data;
+  },
+  updateUser: async (id: string, data: any) => {
+    const response = await api.put(`/users/${id}`, data);
+    return response.data;
+  },
+  deleteUser: async (id: string) => {
+    const response = await api.delete(`/users/${id}`);
+    return response.data;
+  }
+};
+
+export const relabelApi = {
+  getOrders: async (params?: any) => {
+    const response = await api.get('/relabel-orders', { params });
+    return response.data;
+  },
+  complete: async (orderId: string) => {
+    const response = await api.post(`/relabel-orders/${orderId}/complete`);
+    return response.data;
+  }
+};
+
+export const locationApi = {
+  getLocations: async (params?: any) => {
+    const response = await api.get('/locations', { params });
+    return response.data;
+  },
+  create: async (data: any) => {
+    const response = await api.post('/locations', data);
+    return response.data;
+  },
+  adjust: async (data: any) => {
+    const response = await api.post('/inventory/adjust', data);
     return response.data;
   }
 };

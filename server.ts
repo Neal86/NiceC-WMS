@@ -4,8 +4,11 @@ import { createServer as createViteServer } from 'vite';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { getDB, saveDB } from './server/db';
-import { getPrisma, checkDbConnection } from './server/prisma';
+import { getPrisma, checkDbConnection, isJsonFallbackEnabled } from './server/prisma';
 import { OutboundOrder, OutboundOrderItem, OrderStatus, Wave, Feedback, FeedbackComment } from './src/types';
+import { requirePermission, hasPermission, normalizeRole } from './server/permissions';
+import { generalRateLimit, authRateLimit, corsMiddleware, requestIdMiddleware, errorHandler, notFoundHandler, helmetConfig, compressionMiddleware } from './server/middleware';
+import { loginSchema, outboundCreateSchema, outboundUpdateSchema, inboundCreateSchema, inboundReceiveSchema, inventoryAdjustSchema, inventoryTransferSchema, returnCreateSchema, returnInspectSchema, billingRuleCreateSchema, apiKeyCreateSchema, apiKeyUpdateSchema, webhookCreateSchema, webhookUpdateSchema, storeConnectionCreateSchema, storeConnectionUpdateSchema, userCreateSchema, userUpdateSchema, resetPasswordSchema, feedbackCreateSchema, exceptionCaseCreateSchema, bulkImportSchema, formatZodError } from './server/validation';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'NiceC-WMS-Secret-Token-Key-2026!';
 
@@ -248,7 +251,19 @@ const PORT = 3000;
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+
+  // ==========================================
+  // Global Middleware (Security, Compression, CORS, Rate Limit)
+  // ==========================================
+  app.use(compressionMiddleware());
+  app.use(helmetConfig());
+  app.use(corsMiddleware());
+  app.use(requestIdMiddleware());
+  app.use(express.json({ limit: '10mb' }));
+  app.use(generalRateLimit());
+
+  // Strict rate limit on login
+  app.use('/api/auth/login', authRateLimit());
 
   // Health Check APIs
   app.get('/api/health', (req, res) => {
@@ -257,9 +272,12 @@ async function startServer() {
 
   app.get('/api/health/db', async (req, res) => {
     const hasDb = await checkDbConnection();
+    const jsonFallbackEnabled = isJsonFallbackEnabled();
     res.json({
-      status: hasDb ? 'healthy' : 'fallback',
-      database: hasDb ? 'PostgreSQL (Prisma)' : 'file-based JSON fallback',
+      status: hasDb ? 'healthy' : (jsonFallbackEnabled ? 'fallback' : 'unavailable'),
+      database: hasDb ? 'PostgreSQL (Prisma)' : (jsonFallbackEnabled ? 'file-based JSON fallback' : 'No database available'),
+      jsonFallbackEnabled,
+      nodeEnv: process.env.NODE_ENV || 'development',
       timestamp: new Date().toISOString()
     });
   });
@@ -2561,6 +2579,91 @@ async function startServer() {
   });
 
   // ==========================================
+  // User CRUD (Admin)
+  // ==========================================
+  app.get('/api/users', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const users = await prisma.user.findMany({ select: { id: true, username: true, email: true, role: true, customerId: true, status: true, createdAt: true, updatedAt: true } });
+        return res.json(users);
+      } catch (err) {
+        console.error('Failed to fetch users', err);
+      }
+    }
+    const db = getDB();
+    res.json(db.users || []);
+  });
+
+  app.post('/api/users', requireAuth, async (req: any, res) => {
+    const { username, email, password, role, customerId } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const passwordHash = await bcrypt.hash(password, 10);
+        const user = await prisma.user.create({
+          data: { username, email: email || username, passwordHash, role: role || 'WAREHOUSE_OPERATOR', customerId: customerId || null },
+          select: { id: true, username: true, email: true, role: true, customerId: true, status: true, createdAt: true }
+        });
+        return res.status(201).json({ status: 'success', user });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    const db = getDB();
+    const newUser = { id: 'usr_' + Date.now(), username, email: email || username, role: role || 'WAREHOUSE_OPERATOR', status: 'ACTIVE', createdAt: new Date().toISOString() };
+    if (!db.users) db.users = [];
+    db.users.push(newUser);
+    saveDB();
+    res.status(201).json({ status: 'success', user: newUser });
+  });
+
+  app.put('/api/users/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const data: any = {};
+        if (req.body.username) data.username = req.body.username;
+        if (req.body.email) data.email = req.body.email;
+        if (req.body.role) data.role = req.body.role;
+        if (req.body.status) data.status = req.body.status;
+        if (req.body.password) data.passwordHash = await bcrypt.hash(req.body.password, 10);
+        const user = await prisma.user.update({ where: { id: req.params.id }, data, select: { id: true, username: true, email: true, role: true, customerId: true, status: true, createdAt: true, updatedAt: true } });
+        return res.json({ status: 'success', user });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    const db = getDB();
+    const idx = (db.users || []).findIndex((u: any) => u.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+    db.users[idx] = { ...db.users[idx], ...req.body };
+    saveDB();
+    res.json({ status: 'success', user: db.users[idx] });
+  });
+
+  app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.user.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'success', message: 'User deleted' });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+    const db = getDB();
+    db.users = (db.users || []).filter((u: any) => u.id !== req.params.id);
+    saveDB();
+    res.json({ status: 'success', message: 'User deleted' });
+  });
+
+  // ==========================================
   // Inventory API
   // ==========================================
   app.get('/api/inventory', requireAuth, async (req: any, res) => {
@@ -3143,32 +3246,36 @@ Based on the current database state, all inventory levels are synced. Let me kno
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const inv = await prisma.inventory.findFirst({
-          where: { skuId, warehouseId }
-        });
-        if (!inv) return res.status(404).json({ error: 'Inventory not found for specified SKU and warehouse' });
-        
-        const delta = type === 'SUBTRACT' ? -adjustQty : adjustQty;
-        const updated = await prisma.inventory.update({
-          where: { id: inv.id },
-          data: {
-            availableQty: Math.max(0, inv.availableQty + delta)
-          }
-        });
-        
-        await prisma.inventoryTransaction.create({
-          data: {
-            customerId: inv.customerId,
-            warehouseId,
-            skuId,
-            skuCode: inv.skuCode,
-            type: 'ADJUSTMENT',
-            direction: delta > 0 ? 'IN' : 'OUT',
-            quantity: Math.abs(delta),
-            beforeQty: inv.availableQty,
-            afterQty: Math.max(0, inv.availableQty + delta),
-            reason: reason || 'Manual Inventory Adjustment'
-          }
+        const updated = await prisma.$transaction(async (tx) => {
+          const inv = await tx.inventory.findFirst({
+            where: { skuId, warehouseId }
+          });
+          if (!inv) throw new Error('Inventory not found for specified SKU and warehouse');
+          
+          const delta = type === 'SUBTRACT' ? -adjustQty : adjustQty;
+          const newQty = Math.max(0, inv.availableQty + delta);
+          
+          const updatedInv = await tx.inventory.update({
+            where: { id: inv.id },
+            data: { availableQty: newQty }
+          });
+          
+          await tx.inventoryTransaction.create({
+            data: {
+              customerId: inv.customerId,
+              warehouseId,
+              skuId,
+              skuCode: inv.skuCode,
+              type: 'ADJUSTMENT',
+              direction: delta > 0 ? 'IN' : 'OUT',
+              quantity: Math.abs(delta),
+              beforeQty: inv.availableQty,
+              afterQty: newQty,
+              reason: reason || 'Manual Inventory Adjustment'
+            }
+          });
+          
+          return updatedInv;
         });
         
         return res.json({ status: 'success', inventory: updated });
@@ -3994,6 +4101,353 @@ Based on the current database state, all inventory levels are synced. Let me kno
     }
     return res.json({ status: 'success', generated: 2 });
   });
+
+  // ==========================================
+  // API Docs Endpoint
+  // ==========================================
+  app.get('/api/docs', requireAuth, async (req: any, res) => {
+    res.json({
+      openapi: '3.0.0',
+      info: { title: 'NiceC WMS API', version: '1.0.0', description: 'Warehouse Management System REST API' },
+      servers: [{ url: '/api', description: 'API Base URL' }],
+      security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
+      components: {
+        securitySchemes: {
+          BearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+          ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-API-Key' },
+        },
+      },
+      paths: {
+        '/auth/login': {
+          post: { summary: 'Login', tags: ['Auth'], requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { username: { type: 'string' }, password: { type: 'string' } } } } } }, responses: { '200': { description: 'Login successful' }, '401': { description: 'Invalid credentials' } } }
+        },
+        '/outbound-orders': {
+          get: { summary: 'List outbound orders', tags: ['Outbound'], security: [{ BearerAuth: [] }], parameters: [{ name: 'status', in: 'query', schema: { type: 'string' } }, { name: 'page', in: 'query', schema: { type: 'integer' } }, { name: 'pageSize', in: 'query', schema: { type: 'integer' } }], responses: { '200': { description: 'Orders list' } } },
+          post: { summary: 'Create outbound order', tags: ['Outbound'], security: [{ BearerAuth: [] }], requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { logisticsChannelId: { type: 'string' }, carrierId: { type: 'string' }, recipient: { type: 'string' }, items: { type: 'array', items: { type: 'object', properties: { skuId: { type: 'string' }, qty: { type: 'integer' } } } } } } } } }, responses: { '201': { description: 'Order created' } } }
+        },
+        '/outbound-orders/{id}': {
+          get: { summary: 'Get outbound order by ID', tags: ['Outbound'], security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Order detail' } } },
+          put: { summary: 'Update outbound order', tags: ['Outbound'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Order updated' } } },
+          delete: { summary: 'Cancel outbound order', tags: ['Outbound'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Order cancelled' } } }
+        },
+        '/outbound-orders/{id}/cancel': { post: { summary: 'Cancel order and release stock', tags: ['Outbound'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Order cancelled' } } } },
+        '/outbound-orders/{id}/ship': { post: { summary: 'Confirm shipment and deduct stock', tags: ['Outbound'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Shipped' } } } },
+        '/outbound-orders/import': { post: { summary: 'Bulk import outbound orders from CSV/XLSX', tags: ['Outbound'], security: [{ BearerAuth: [] }], requestBody: { content: { 'multipart/form-data': { schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } } } }, responses: { '200': { description: 'Import result' } } } },
+        '/inventory': { get: { summary: 'List inventory', tags: ['Inventory'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Inventory list' } } } },
+        '/inventory/adjust': { post: { summary: 'Adjust inventory', tags: ['Inventory'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Inventory adjusted' } } } },
+        '/inventory/transfer': { post: { summary: 'Transfer inventory between warehouses', tags: ['Inventory'], security: [{ BearerAuth: [] }], responses: { '200': { description: 'Inventory transferred' } } } },
+        '/inbound-orders': { get: { summary: 'List inbound orders', tags: ['Inbound'], security: [{ BearerAuth: [] }] }, post: { summary: 'Create inbound ASN', tags: ['Inbound'], security: [{ BearerAuth: [] }] } },
+        '/inbound-orders/{id}/receive': { post: { summary: 'Receive inbound shipment', tags: ['Inbound'], security: [{ BearerAuth: [] }] } },
+        '/return-orders': { get: { summary: 'List return orders', tags: ['Returns'], security: [{ BearerAuth: [] }] }, post: { summary: 'Create return order', tags: ['Returns'], security: [{ BearerAuth: [] }] } },
+        '/return-orders/{id}/receive': { post: { summary: 'Receive return', tags: ['Returns'], security: [{ BearerAuth: [] }] } },
+        '/return-orders/{id}/inspect': { post: { summary: 'Inspect return items', tags: ['Returns'], security: [{ BearerAuth: [] }] } },
+        '/return-orders/{id}/restock': { post: { summary: 'Restock return items', tags: ['Returns'], security: [{ BearerAuth: [] }] } },
+        '/billing-rules': { get: { summary: 'List billing rules', tags: ['Billing'] }, post: { summary: 'Create billing rule', tags: ['Billing'], security: [{ BearerAuth: [] }] } },
+        '/billing-records': { get: { summary: 'List billing records', tags: ['Billing'] } },
+        '/invoices': { get: { summary: 'List invoices', tags: ['Billing'] } },
+        '/api-keys': { get: { summary: 'List API keys', tags: ['Integration'], security: [{ BearerAuth: [] }] }, post: { summary: 'Create API key', tags: ['Integration'], security: [{ BearerAuth: [] }] } },
+        '/webhooks': { get: { summary: 'List webhooks', tags: ['Integration'], security: [{ BearerAuth: [] }] }, post: { summary: 'Create webhook', tags: ['Integration'], security: [{ BearerAuth: [] }] } },
+        '/store-connections': { get: { summary: 'List store connections', tags: ['Integration'], security: [{ BearerAuth: [] }] }, post: { summary: 'Create store connection', tags: ['Integration'], security: [{ BearerAuth: [] }] } },
+        '/health': { get: { summary: 'Health check', tags: ['System'] } },
+        '/health/db': { get: { summary: 'Database health check', tags: ['System'] } },
+      },
+      'x-webhook-events': [
+        { event: 'order.created', description: 'Outbound order created' },
+        { event: 'order.updated', description: 'Outbound order updated' },
+        { event: 'order.shipped', description: 'Outbound order shipped' },
+        { event: 'inventory.updated', description: 'Inventory level changed' },
+        { event: 'inbound.completed', description: 'Inbound order completed' },
+        { event: 'return.completed', description: 'Return order completed' },
+      ],
+      'x-error-codes': [
+        { code: 'UNAUTHORIZED', description: 'Missing or invalid authentication' },
+        { code: 'FORBIDDEN', description: 'Insufficient permissions' },
+        { code: 'VALIDATION_ERROR', description: 'Request body validation failed' },
+        { code: 'NOT_FOUND', description: 'Resource not found' },
+        { code: 'INSUFFICIENT_STOCK', description: 'Not enough available inventory' },
+        { code: 'RATE_LIMITED', description: 'Too many requests' },
+        { code: 'INTERNAL_ERROR', description: 'Internal server error' },
+      ],
+      'x-curl-examples': {
+        login: 'curl -X POST /api/auth/login -H "Content-Type: application/json" -d \'{"username":"client@nicecwms.com","password":"client123456"}\'',
+        createOrder: 'curl -X POST /api/outbound-orders -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d \'{"logisticsChannelId":"chan_usps_ground","carrierId":"carr_usps","recipient":"John Doe (NY, USA)","items":[{"skuId":"sku_1","qty":1}]}\'',
+        getOrders: 'curl -H "Authorization: Bearer <token>" /api/outbound-orders?status=PENDING&page=1&pageSize=10',
+        getInventory: 'curl -H "Authorization: Bearer <token>" /api/inventory',
+        getSkus: 'curl -H "Authorization: Bearer <token>" /api/skus',
+        createAsn: 'curl -X POST /api/inbound-orders -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d \'{"warehouseId":"wh_1","items":[{"skuId":"sku_1","skuCode":"TS-V-NA-4","qtyExpected":100}]}\'',
+        apiKey: 'curl -H "X-API-Key: nwc_<your_api_key>" /api/outbound-orders?page=1',
+        webhookSignature: 'HMAC-SHA256(webhook_secret, request_body) for webhook payload verification',
+      },
+    });
+  });
+
+  // ==========================================
+  // Bulk Import Outbound Orders
+  // ==========================================
+  app.post('/api/outbound-orders/import', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const { rows } = req.body;
+    
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'No rows provided. Upload a CSV/XLSX file or provide rows array.' } });
+    }
+
+    const parseResult = bulkImportSchema.safeParse({ rows });
+    if (!parseResult.success) {
+      return res.status(400).json(formatZodError(parseResult.error));
+    }
+
+    const validatedRows = parseResult.data.rows;
+    const errors: Array<{ row: number; message: string }> = [];
+    const successRows: Array<{ orderNo: string; orderId: string; skuCount: number }> = [];
+    const mergedOrders: Record<string, {
+      orderNo: string;
+      recipientName: string;
+      address: string;
+      phone: string;
+      logisticsChannel: string;
+      items: Array<{ skuCode: string; qty: number }>;
+    }> = {};
+
+    // Group rows by orderNo
+    for (const row of validatedRows) {
+      if (!mergedOrders[row.orderNo]) {
+        mergedOrders[row.orderNo] = {
+          orderNo: row.orderNo,
+          recipientName: row.recipientName,
+          address: row.address,
+          phone: row.phone || '',
+          logisticsChannel: row.logisticsChannel,
+          items: [],
+        };
+      }
+      mergedOrders[row.orderNo].items.push({ skuCode: row.skuCode, qty: row.qty });
+    }
+
+    const hasDb = await checkDbConnection();
+    let customerId = user.customerId || 'cust_1';
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        for (const [orderNo, order] of Object.entries(mergedOrders)) {
+          const resolvedChannel = await prisma.logisticsChannel.findFirst({
+            where: { OR: [{ name: { contains: order.logisticsChannel, mode: 'insensitive' } }, { code: { contains: order.logisticsChannel, mode: 'insensitive' } }] }
+          });
+          const resolvedCarrier = resolvedChannel ? await prisma.carrier.findUnique({ where: { id: resolvedChannel.carrierId } }) : null;
+          const defaultChannel = await prisma.logisticsChannel.findFirst();
+          const defaultCarrier = defaultChannel ? await prisma.carrier.findUnique({ where: { id: defaultChannel.carrierId } }) : null;
+
+          const channel = resolvedChannel || defaultChannel;
+          const carrier = resolvedCarrier || defaultCarrier;
+
+          if (!channel || !carrier) {
+            errors.push({ row: 0, message: `Order ${orderNo}: No logistics channel or carrier found` });
+            continue;
+          }
+
+          // Verify stock for each SKU
+          let hasStockIssue = false;
+          for (const item of order.items) {
+            const sku = await prisma.sKU.findFirst({ where: { code: item.skuCode } });
+            if (!sku) {
+              errors.push({ row: 0, message: `Order ${orderNo}: SKU code '${item.skuCode}' not found` });
+              hasStockIssue = true;
+              continue;
+            }
+            const inv = await prisma.inventory.findFirst({ where: { skuId: sku.id, warehouseId: 'wh_1' } });
+            if (!inv || inv.availableQty < item.qty) {
+              errors.push({ row: 0, message: `Order ${orderNo}: Insufficient stock for SKU '${item.skuCode}' (available: ${inv ? inv.availableQty : 0}, needed: ${item.qty})` });
+              hasStockIssue = true;
+            }
+          }
+          if (hasStockIssue) continue;
+
+          const newOrderId = 'ord_imp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+          const totalQty = order.items.reduce((sum, i) => sum + i.qty, 0);
+
+          await prisma.$transaction(async (tx) => {
+            const outboundOrder = await tx.outboundOrder.create({
+              data: {
+                id: newOrderId,
+                orderNo,
+                status: 'PENDING',
+                customerId,
+                logisticsChannelId: channel.id,
+                carrierId: carrier.id,
+                recipient: `${order.recipientName}, ${order.address}`,
+                totalQty,
+                totalWeight: parseFloat((totalQty * 1.2).toFixed(2)),
+                remark: `Bulk import: ${order.logisticsChannel}`,
+                salesPlatform: 'Bulk Import',
+                orderType: '单品单件',
+                createdTime: new Date(),
+              }
+            });
+
+            for (const item of order.items) {
+              const sku = await tx.sKU.findFirst({ where: { code: item.skuCode } });
+              if (!sku) continue;
+              const inv = await tx.inventory.findFirst({ where: { skuId: sku.id, warehouseId: 'wh_1' } });
+              if (!inv) continue;
+
+              const orderItem = await tx.outboundOrderItem.create({
+                data: {
+                  id: 'item_imp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                  orderId: newOrderId,
+                  skuId: sku.id,
+                  skuCode: sku.code,
+                  skuBarcode: sku.barcode,
+                  qty: item.qty,
+                  productName: sku.name,
+                  category: '未分类',
+                }
+              });
+
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  availableQty: inv.availableQty - item.qty,
+                  reservedQty: inv.reservedQty + item.qty,
+                }
+              });
+
+              await tx.inventoryReservation.create({
+                data: {
+                  customerId,
+                  orderId: newOrderId,
+                  orderItemId: orderItem.id,
+                  skuId: sku.id,
+                  skuCode: sku.code,
+                  warehouseId: 'wh_1',
+                  quantity: item.qty,
+                  status: 'ACTIVE',
+                }
+              });
+
+              await tx.inventoryTransaction.create({
+                data: {
+                  customerId,
+                  warehouseId: 'wh_1',
+                  skuId: sku.id,
+                  skuCode: sku.code,
+                  type: 'BULK_IMPORT_RESERVE',
+                  direction: 'OUT',
+                  quantity: item.qty,
+                  beforeQty: inv.availableQty,
+                  afterQty: inv.availableQty - item.qty,
+                  reason: `Bulk import order ${orderNo} stock reservation`,
+                  operatorUserId: user?.id,
+                }
+              });
+            }
+
+            await tx.auditLog.create({
+              data: {
+                userId: user?.id || 'system',
+                action: 'BULK_IMPORT',
+                resource: 'OutboundOrder',
+                resourceId: orderNo,
+                changes: JSON.stringify({ items: order.items, totalQty }),
+              }
+            });
+          });
+
+          successRows.push({ orderNo, orderId: newOrderId, skuCount: order.items.length });
+        }
+      } catch (err: any) {
+        console.error('Bulk import error:', err);
+        return res.status(500).json({ success: false, error: { code: 'IMPORT_ERROR', message: err.message } });
+      }
+    } else {
+      // JSON fallback for bulk import
+      const db = getDB();
+      for (const [orderNo, order] of Object.entries(mergedOrders)) {
+        const channel = db.logisticsChannels.find(c => order.logisticsChannel.includes(c.code) || order.logisticsChannel.includes(c.name));
+        if (!channel) {
+          errors.push({ row: 0, message: `Order ${orderNo}: No matching logistics channel for '${order.logisticsChannel}'` });
+          continue;
+        }
+        const carrier = db.carriers.find(c => c.id === channel.carrierId);
+        if (!carrier) continue;
+
+        let hasStockIssue = false;
+        for (const item of order.items) {
+          const sku = db.skus.find(s => s.code === item.skuCode);
+          if (!sku) {
+            errors.push({ row: 0, message: `Order ${orderNo}: SKU '${item.skuCode}' not found` });
+            hasStockIssue = true;
+            continue;
+          }
+          const inv = db.inventory.find(i => i.skuId === sku.id);
+          if (!inv || inv.availableQty < item.qty) {
+            errors.push({ row: 0, message: `Order ${orderNo}: Insufficient stock for '${item.skuCode}'` });
+            hasStockIssue = true;
+          }
+        }
+        if (hasStockIssue) continue;
+
+        const newOrderId = 'ord_imp_' + Date.now();
+        const totalQty = order.items.reduce((sum, i) => sum + i.qty, 0);
+        db.outboundOrders.push({
+          id: newOrderId,
+          orderNo,
+          status: 'PENDING',
+          customerId,
+          logisticsChannelId: channel.id,
+          carrierId: carrier.id,
+          recipient: `${order.recipientName}, ${order.address}`,
+          totalQty,
+          totalWeight: parseFloat((totalQty * 1.2).toFixed(2)),
+          remark: `Bulk import: ${order.logisticsChannel}`,
+          salesPlatform: 'Bulk Import',
+          orderType: '单品单件',
+          waveId: null,
+          labelPrinted: 'NOT_PRINTED',
+          createdTime: new Date().toISOString(),
+        });
+
+        for (const item of order.items) {
+          const sku = db.skus.find(s => s.code === item.skuCode);
+          if (!sku) continue;
+          const inv = db.inventory.find(i => i.skuId === sku.id);
+          if (inv) {
+            inv.availableQty = Math.max(0, inv.availableQty - item.qty);
+            inv.reservedQty = (inv.reservedQty || 0) + item.qty;
+          }
+          db.outboundOrderItems.push({
+            id: 'item_imp_' + Date.now(),
+            orderId: newOrderId,
+            skuId: sku.id,
+            skuCode: sku.code,
+            skuBarcode: sku.barcode,
+            qty: item.qty,
+            productName: sku.name,
+            category: '未分类',
+          });
+        }
+        saveDB();
+        successRows.push({ orderNo, orderId: newOrderId, skuCount: order.items.length });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Import completed. ${successRows.length} orders created, ${errors.length} errors.`,
+      data: {
+        successRows,
+        errors,
+        totalRows: validatedRows.length,
+        orderCount: successRows.length,
+        errorCount: errors.length,
+      },
+    });
+  });
+
+  // ==========================================
+  // API Error Handling (after all routes)
+  // ==========================================
+  app.use(notFoundHandler);
+  app.use(errorHandler);
 
   // ==========================================
   // Vite Dev / Prod Handling

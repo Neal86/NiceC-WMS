@@ -16,11 +16,22 @@ if [ -n "${DATABASE_URL:-}" ]; then
   echo "Generating Prisma client..."
   npx prisma generate
 
-  if [ "${RUN_DB_PUSH:-false}" = "true" ]; then
-    echo "RUN_DB_PUSH=true; applying Prisma schema with db push."
-    npx prisma db push
+  # Production: use prisma migrate deploy (safe, only applies pending migrations)
+  # Dev/Demo: use db push (schema sync, acceptable for development)
+  if [ "${NODE_ENV:-production}" = "production" ]; then
+    if [ "${RUN_DB_MIGRATE:-true}" = "true" ]; then
+      echo "Production mode: running prisma migrate deploy..."
+      npx prisma migrate deploy
+    else
+      echo "RUN_DB_MIGRATE is not true; skipping database migration."
+    fi
   else
-    echo "RUN_DB_PUSH is not true; skipping automatic schema push for production safety."
+    if [ "${RUN_DB_PUSH:-false}" = "true" ]; then
+      echo "Dev mode: RUN_DB_PUSH=true; applying Prisma schema with db push."
+      npx prisma db push
+    else
+      echo "Dev mode: RUN_DB_PUSH is not true; skipping schema push."
+    fi
   fi
 
   if [ "${RUN_DB_SEED:-false}" = "true" ]; then
@@ -31,6 +42,7 @@ if [ -n "${DATABASE_URL:-}" ]; then
   fi
 else
   echo "DATABASE_URL is not set; app will use JSON fallback/mock mode where supported."
+  echo "This is acceptable for demo/dev but NOT for production."
 fi
 
 echo "=== Launching NiceC WMS server ==="

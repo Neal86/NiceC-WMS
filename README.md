@@ -60,13 +60,19 @@ NiceC WMS 是一个面向海外仓业务的全栈仓库管理系统，采用 **R
 - `npm run test:functions` 全功能端点检查
 - JWT 登录鉴权
 - 客户角色数据隔离
-- PostgreSQL 不可用时的 JSON fallback/mock 运行能力
+- PostgreSQL 不可用时的 JSON fallback/mock 运行能力（`ENABLE_JSON_FALLBACK=false` 关闭）
+- 完整 RBAC 权限矩阵（73+ 项细粒度权限，`server/permissions.ts`）
+- Zod 请求校验（`server/validation.ts`）
+- 安全中间件：Helmet、CORS、压缩、请求 ID、速率限制（`server/middleware.ts`）
+- 登录端点 `20 req/15min` 严格限流，全局 `200 req/15min`
+- 统一错误处理：不向生产环境泄露堆栈
+- 初始 Prisma 迁移文件（`prisma/migrations/0001_initial/`）
+- OpenAPI 3.0 规范文档（`GET /api/docs`）
+- 批量导入出库单（`POST /api/outbound-orders/import`）
+- 库存操作全部使用 `Prisma $transaction` 保证并发安全
 
 仍建议在正式上线前继续补强：
 
-- 正式 Prisma migration 流程，替代生产 `db push`
-- 完整 RBAC 权限矩阵
-- API rate limit / Helmet / audit trail 全覆盖
 - 对接真实承运商、店铺平台、对象存储
 - E2E 测试和备份恢复演练
 
@@ -122,8 +128,8 @@ openssl rand -base64 48
 首次部署可以临时打开：
 
 ```env
-RUN_DB_PUSH=true
-RUN_DB_SEED=true
+RUN_DB_MIGRATE=true   # 生产环境：执行 prisma migrate deploy
+RUN_DB_SEED=true       # 填充演示种子数据
 ```
 
 然后启动：
@@ -135,8 +141,9 @@ docker compose up -d --build
 初始化完成后，建议改回：
 
 ```env
-RUN_DB_PUSH=false
+RUN_DB_MIGRATE=false
 RUN_DB_SEED=false
+ENABLE_JSON_FALLBACK=false   # 生产环境必须关闭
 ```
 
 再重启：
@@ -145,7 +152,8 @@ RUN_DB_SEED=false
 docker compose up -d
 ```
 
-> 生产环境默认不自动执行 `db push --accept-data-loss`，避免意外破坏线上数据。
+> 生产环境使用 `prisma migrate deploy`（安全，只应用待处理迁移）。<br/>
+> 开发环境使用 `RUN_DB_PUSH=true` + `prisma db push`（快速迭代）。
 
 ### 3. 查看状态
 
@@ -242,10 +250,11 @@ npm run test:functions
 
 | 角色 | 登录账号 | 默认密码 | 说明 |
 | --- | --- | --- | --- |
-| Admin | `admin@nicec.net` | `admin123` | 管理后台账号 |
-| Admin | `neal@nicec.net` | `admin123` | 项目负责人账号 |
-| Operator | `operator` | `operator123` | 仓库操作员 |
-| Client | `client@nicec.net` | `client123` | 客户门户账号 |
+| Admin | `admin@nicecwms.com` | `admin123456` | 平台超级管理员 |
+| Admin | `admin@nicec.net` | `admin123` | 项目负责人账号 |
+| Warehouse Operator | `warehouse@nicecwms.com` | `warehouse123456` | 仓库操作员 |
+| Client | `client@nicecwms.com` | `client123456` | 客户门户账号 |
+| Client 2 | `client2@nicecwms.com` | `client123456` | 演示客户隔离 |
 
 正式生产必须通过 `.env` 或数据库种子脚本修改默认密码。
 
@@ -271,34 +280,44 @@ npm run test:functions
 ## 当前已完成模块
 
 - [x] 登录认证 + JWT
+- [x] 完整 RBAC 权限矩阵（73+ 权限，5 角色）
+- [x] Zod 请求校验 + 格式化错误输出
+- [x] 安全中间件（Helmet/CORS/RateLimit/Compression/RequestId）
+- [x] 统一错误处理（生产不泄露堆栈）
 - [x] 三角色权限控制 + 客户数据隔离
-- [x] Admin Dashboard
-- [x] 出库单完整 CRUD + 库存事务
+- [x] Admin Dashboard / Warehouse Portal / Client Portal
+- [x] 出库单完整 CRUD + 库存事务（含 $transaction 并发安全）
+- [x] 批量导入出库单（CSV 上传/解析/逐行校验/事务提交）
 - [x] 波次管理 + 面单管理
-- [x] 入库管理 (ASN) + 上架管理
+- [x] 入库管理 (ASN) + 上架管理 + 入库认领
 - [x] SKU/产品/客户/仓库/渠道元数据管理
-- [x] 库存管理 + 库存流水
-- [x] Client Portal (Dashboard/SKU/库存/出库/入库)
-- [x] Feedback 管理
-- [x] AI Assistant Widget
-- [x] 操作日志
-- [x] Docker Compose 部署
-- [x] 自动化冒烟测试
-- [x] 退货管理 (创建/收货/质检/入库)
-- [x] 账单管理 (规则配置/账单记录/发票)
+- [x] 库存管理 + 库存流水 + 库存预留/释放/扣减
+- [x] Client Portal (Dashboard/SKU/库存/出库/入库/退货/账单/API集成)
+- [x] Feedback 管理 + 工单系统
+- [x] AI Assistant Widget（右下角悬浮聊天）
+- [x] 操作日志 + AuditLog
+- [x] Docker Compose 部署（PostgreSQL 16 + WMS App）
+- [x] Prisma 初始迁移文件（`prisma/migrations/0001_initial/`）
+- [x] OpenAPI 3.0 文档（`GET /api/docs`）
+- [x] 自动化冒烟测试 + 全功能端点检查
+- [x] 退货管理（创建/收货/质检/入库）
+- [x] 账单管理（规则配置/账单记录/发票）
 - [x] API Key / Webhook 管理
 - [x] 店铺/平台连接管理
-- [x] Integration Center 页面
-- [x] WarehousePortal 仓库操作端
+- [x] Integration Center 页面（含 API 文档 tab）
+- [x] WarehousePortal 仓库操作端（收货/上架/拣货/复核/发货/退货/异常/日志）
+- [x] JSON fallback 模式（`ENABLE_JSON_FALLBACK` 环境控制）
+- [x] 库存并发安全（所有库存操作用 `$transaction`）
 
 ## 后续 TODO
 
-- [ ] AI Assistant 接入真实 LLM API
-- [ ] WebSocket 实时推送
-- [ ] 批量操作性能优化
+- [ ] AI Assistant 接入真实 LLM API（当前为 mock）
+- [ ] WebSocket 实时推送通知
+- [ ] 仓库端补充：打包/称重/换标/库位调整 独立选项卡
+- [ ] Admin 面板用户/仓库/客户 CRUD 对接真实 API（当前为本地状态演示）
 - [ ] 单元测试覆盖
 - [ ] E2E 测试和备份恢复演练
-- [ ] 正式 Prisma migration 流程
+- [ ] 适配器架构：承运商/店铺平台/对象存储
 
 ## 主要 API
 
@@ -317,6 +336,13 @@ npm run test:functions
 - `POST /api/outbound-orders/:id/cancel`
 - `POST /api/outbound-orders/:id/ship`
 - `POST /api/outbound-orders/batch-generate-wave`
+- `POST /api/outbound-orders/import` — 批量 CSV 导入
+
+### Health & Docs
+
+- `GET /api/health`
+- `GET /api/health/db` — 含节点环境、JSON fallback 状态
+- `GET /api/docs` — OpenAPI 3.0 规范文档
 
 ### Master Data
 

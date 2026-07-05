@@ -29,8 +29,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-nicec_wms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nicec_wms}?schema=public
-      RUN_DB_PUSH: ${RUN_DB_PUSH:-false}
+      RUN_DB_MIGRATE: ${RUN_DB_MIGRATE:-true}
       RUN_DB_SEED: ${RUN_DB_SEED:-false}
+      ENABLE_JSON_FALLBACK: false
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiKeyApi, webhookApi, storeConnectionApi } from '../../api';
 import { Key, Webhook, Link2, FileText, Plus, Trash2, Copy, CheckCircle2, AlertTriangle, RefreshCw, ExternalLink, Shield, Zap, ShoppingBag, Store } from 'lucide-react';
+import ApiDocs from './ApiDocs';
 
 type Tab = 'api-keys' | 'webhooks' | 'stores' | 'docs';
 
@@ -285,19 +286,8 @@ export default function IntegrationCenter({ currentUser }: Props) {
           )}
 
           {tab === 'docs' && (
-            <div className="bg-white border rounded-lg p-8 text-center space-y-4">
-              <FileText className="w-16 h-16 mx-auto text-blue-400" />
-              <h3 className="text-lg font-bold">WMS API 文档</h3>
-              <p className="text-gray-500 max-w-md mx-auto">查看完整的 API 接口文档，了解如何通过 API 管理订单、库存、入库、出库等操作。</p>
-              <div className="flex justify-center gap-4">
-                <a href="#" className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"><ExternalLink className="w-4 h-4" />REST API 文档</a>
-                <a href="#" className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"><Zap className="w-4 h-4" />Webhook 事件列表</a>
-              </div>
-              <div className="mt-6 text-left bg-gray-50 rounded-lg p-4 text-xs font-mono space-y-1">
-                <p className="text-gray-400"># 示例请求</p>
-                <p>curl -H "Authorization: Bearer YOUR_API_KEY" \</p>
-                <p className="ml-4">https://api.nicecwms.com/api/outbound-orders</p>
-              </div>
+            <div className="px-0">
+              <ApiDocs />
             </div>
           )}
         </>
