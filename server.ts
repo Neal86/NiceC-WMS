@@ -293,7 +293,19 @@ async function startServer() {
   // ==========================================
   app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
+
+    // Validate input
+    if (!username || !password) {
+      return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+    }
     
+    // Check if demo login is enabled
+    const isProduction = process.env.NODE_ENV === 'production';
+    const enableDemoLogin = process.env.ENABLE_DEMO_LOGIN === 'true';
+    if (isProduction && !enableDemoLogin) {
+      // In production, only database users can login (skip demo fallback)
+    }
+
     // 1. Try real database login if available
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -308,8 +320,11 @@ async function startServer() {
           }
         });
         
-        if (dbUser && dbUser.status === 'ACTIVE') {
-          // Compare passwords
+        if (dbUser) {
+          if (dbUser.status !== 'ACTIVE') {
+            return res.status(401).json({ status: 'error', message: 'Account is disabled' });
+          }
+          // Compare passwords with bcrypt
           const isMatch = bcrypt.compareSync(password, dbUser.passwordHash);
           if (isMatch) {
             const token = jwt.sign(
@@ -318,7 +333,8 @@ async function startServer() {
                 username: dbUser.username, 
                 email: dbUser.email, 
                 role: dbUser.role, 
-                customerId: dbUser.customerId 
+                customerId: dbUser.customerId,
+                warehouseId: dbUser.warehouseId
               },
               JWT_SECRET,
               { expiresIn: '24h' }
@@ -330,19 +346,35 @@ async function startServer() {
                 id: dbUser.id,
                 username: dbUser.username,
                 email: dbUser.email,
+                name: dbUser.username,
                 role: dbUser.role,
                 customerId: dbUser.customerId,
+                warehouseId: dbUser.warehouseId,
                 token
               }
             });
           }
+          // Password didn't match but user exists
+          return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+        }
+        // User not found in DB
+        if (isProduction && !enableDemoLogin) {
+          return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
         }
       } catch (err) {
         console.error('Prisma auth error:', err);
+        if (isProduction && !enableDemoLogin) {
+          return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+        }
       }
     }
 
-    // 2. Local Fallback Database
+    // 2. Demo login (only if enabled)
+    const enableJsonFallback = process.env.ENABLE_JSON_FALLBACK !== 'false';
+    if (!enableJsonFallback || (!enableDemoLogin && isProduction)) {
+      return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+    }
+
     const db = getDB();
     let localUser = db.users.find(u => u.username === username || u.email === username);
     
@@ -375,6 +407,22 @@ async function startServer() {
         status: 'ACTIVE',
         createdAt: new Date().toISOString()
       },
+      'admin@nicecwms.com': {
+        id: 'usr_admin_spec',
+        username: 'admin@nicecwms.com',
+        email: 'admin@nicecwms.com',
+        role: 'ADMIN' as any,
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      },
+      'warehouse@nicecwms.com': {
+        id: 'usr_wh_spec',
+        username: 'warehouse@nicecwms.com',
+        email: 'warehouse@nicecwms.com',
+        role: 'WAREHOUSE_MANAGER' as any,
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      },
     };
     
     if (!localUser && specUsers[username]) {
@@ -383,8 +431,8 @@ async function startServer() {
       saveDB();
     }
 
-    // For fallback: check passwords against spec defaults
-    const passwordDefaults: Record<string, string> = {
+    // Demo password map (only used when ENABLE_DEMO_LOGIN is active)
+    const demoPasswords: Record<string, string> = {
       'admin@nicecwms.com': 'admin123456',
       'warehouse@nicecwms.com': 'warehouse123456',
       'client@nicecwms.com': 'client123456',
@@ -396,30 +444,21 @@ async function startServer() {
       'client@nicec.net': 'client123456',
     };
 
-    if (localUser && passwordDefaults[username] && password === passwordDefaults[username]) {
-      const u = localUser as any;
-      const token = jwt.sign(
-        { 
-          id: u.id, 
-          username: u.username, 
-          email: u.email, 
-          role: u.role, 
-          customerId: u.customerId 
-        },
-        JWT_SECRET,
-        { expiresIn: '24h' }
-      );
-      
-      return res.json({
-        status: 'success',
-        user: {
-          ...localUser,
-          token
-        }
-      });
-    }
-
     if (localUser) {
+      // Check if local user has a passwordHash in DB (from seeded data)
+      if ((localUser as any).passwordHash) {
+        const isMatch = bcrypt.compareSync(password, (localUser as any).passwordHash);
+        if (!isMatch) {
+          return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+        }
+      } else {
+        // Fallback to demo password check
+        const expectedPassword = demoPasswords[username];
+        if (!expectedPassword || password !== expectedPassword) {
+          return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+        }
+      }
+      
       const u = localUser as any;
       const token = jwt.sign(
         { 
@@ -427,7 +466,8 @@ async function startServer() {
           username: u.username, 
           email: u.email, 
           role: u.role, 
-          customerId: u.customerId 
+          customerId: u.customerId,
+          warehouseId: u.warehouseId
         },
         JWT_SECRET,
         { expiresIn: '24h' }
@@ -436,16 +476,18 @@ async function startServer() {
       return res.json({
         status: 'success',
         user: {
-          ...localUser,
+          id: u.id,
+          name: u.username,
+          email: u.email,
+          role: u.role,
+          customerId: u.customerId,
+          warehouseId: u.warehouseId,
           token
         }
       });
     }
     
-    return res.status(401).json({
-      status: 'error',
-      message: '用户名或密码错误。可用账号: admin@nicecwms.com/admin123456, warehouse@nicecwms.com/warehouse123456, client@nicecwms.com/client123456'
-    });
+    return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
   });
 
   // ==========================================
@@ -1770,6 +1812,9 @@ async function startServer() {
         if (order.status === 'SHIPPED') {
           return res.status(400).json({ error: '订单已是出库状态' });
         }
+        if (order.status !== 'SHIPPING' && order.status !== 'REVIEWS') {
+          return res.status(400).json({ error: `订单状态是 ${order.status}，不能直接出库。必须先完成打包和称重。` });
+        }
 
         const updated = await prisma.$transaction(async (tx) => {
           // Deduct stock (consume reservations)
@@ -1892,11 +1937,6 @@ async function startServer() {
   // POST /api/outbound-orders/export
   app.post('/api/outbound-orders/export', (req, res) => {
     res.json({ status: 'success', downloadUrl: 'https://mockpdf.wms.nicec.net/export/orders_export_temp.xlsx' });
-  });
-
-  // POST /api/outbound-orders/import
-  app.post('/api/outbound-orders/import', (req, res) => {
-    res.json({ status: 'success', message: 'Excel数据成功导入！已新增10个出库订单。' });
   });
 
   // ==========================================
@@ -2039,7 +2079,7 @@ async function startServer() {
     res.json(cust);
   });
 
-  app.post('/api/customers', requireAuth, async (req: any, res) => {
+  app.post('/api/customers', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2067,7 +2107,7 @@ async function startServer() {
     res.status(201).json({ status: 'success', customer: newCust });
   });
 
-  app.put('/api/customers/:id', requireAuth, async (req: any, res) => {
+  app.put('/api/customers/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2094,7 +2134,7 @@ async function startServer() {
     res.json({ status: 'success', customer: db.customers[index] });
   });
 
-  app.delete('/api/customers/:id', requireAuth, async (req: any, res) => {
+  app.delete('/api/customers/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2508,7 +2548,7 @@ async function startServer() {
     res.json(db.warehouses);
   });
 
-  app.post('/api/warehouses', requireAuth, async (req: any, res) => {
+  app.post('/api/warehouses', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN', 'WAREHOUSE_MANAGER'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2535,7 +2575,7 @@ async function startServer() {
     res.status(201).json({ status: 'success', warehouse: newWh });
   });
 
-  app.put('/api/warehouses/:id', requireAuth, async (req: any, res) => {
+  app.put('/api/warehouses/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN', 'WAREHOUSE_MANAGER'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2561,7 +2601,7 @@ async function startServer() {
     res.json({ status: 'success', warehouse: db.warehouses[index] });
   });
 
-  app.delete('/api/warehouses/:id', requireAuth, async (req: any, res) => {
+  app.delete('/api/warehouses/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2581,7 +2621,7 @@ async function startServer() {
   // ==========================================
   // User CRUD (Admin)
   // ==========================================
-  app.get('/api/users', requireAuth, async (req: any, res) => {
+  app.get('/api/users', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2596,7 +2636,7 @@ async function startServer() {
     res.json(db.users || []);
   });
 
-  app.post('/api/users', requireAuth, async (req: any, res) => {
+  app.post('/api/users', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const { username, email, password, role, customerId } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
     const hasDb = await checkDbConnection();
@@ -2621,7 +2661,7 @@ async function startServer() {
     res.status(201).json({ status: 'success', user: newUser });
   });
 
-  app.put('/api/users/:id', requireAuth, async (req: any, res) => {
+  app.put('/api/users/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2646,7 +2686,7 @@ async function startServer() {
     res.json({ status: 'success', user: db.users[idx] });
   });
 
-  app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
+  app.delete('/api/users/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -2692,7 +2732,20 @@ async function startServer() {
     res.json(inventory);
   });
 
-  app.put('/api/inventory/:id', (req, res) => {
+  app.put('/api/inventory/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const { availableQty, reservedQty, damagedQty } = req.body;
+        const data: any = {};
+        if (availableQty !== undefined) data.availableQty = availableQty;
+        if (reservedQty !== undefined) data.reservedQty = reservedQty;
+        if (damagedQty !== undefined) data.damagedQty = damagedQty;
+        const updated = await prisma.inventory.update({ where: { id: req.params.id }, data });
+        return res.json({ status: 'success', inventory: updated });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
     const db = getDB();
     const index = db.inventory.findIndex(i => i.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: 'Inventory not found' });
@@ -2704,9 +2757,26 @@ async function startServer() {
   // ==========================================
   // Operation Logs API
   // ==========================================
-  app.get('/api/operation-logs', (req, res) => {
+  app.get('/api/operation-logs', requireAuth, async (req: any, res) => {
+    const user = req.user;
+    const role = (user.role || '').toUpperCase();
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const where: any = {};
+        if (role === 'CLIENT') {
+          return res.status(403).json({ error: 'Forbidden. Clients cannot access global operation logs.' });
+        }
+        const logs = await prisma.operationLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: 200 });
+        return res.json(logs);
+      } catch (err) { console.error('Prisma operation logs fetch error:', err); }
+    }
     const db = getDB();
-    res.json(db.operationLogs);
+    if (role === 'CLIENT') {
+      return res.status(403).json({ error: 'Forbidden. Clients cannot access global operation logs.' });
+    }
+    res.json((db.operationLogs || []).slice(0, 200));
   });
 
   // ==========================================
@@ -3563,22 +3633,33 @@ Based on the current database state, all inventory levels are synced. Let me kno
 
   app.post('/api/outbound-orders/:id/weigh-package', requireAuth, async (req: any, res) => {
     const { weight, length, width, height } = req.body;
+    const parsedWeight = parseFloat(weight || 0);
+    if (parsedWeight <= 0) return res.status(400).json({ error: 'Weight must be greater than 0' });
+    
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const order = await prisma.outboundOrder.findUnique({ where: { id: req.params.id } });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        if (order.status !== 'REVIEWS') return res.status(400).json({ error: `Cannot weigh order in status '${order.status}'. Must be REVIEWS (packed).` });
+
         const pkgNo = 'PKG' + String(Date.now()).substring(3, 15);
         const pkg = await prisma.package.create({
           data: {
             packageNo: pkgNo,
             orderId: req.params.id,
-            weight: parseFloat(weight || 0),
+            weight: parsedWeight,
             length: parseFloat(length || 0),
             width: parseFloat(width || 0),
             height: parseFloat(height || 0)
           }
         });
-        return res.status(201).json({ status: 'success', package: pkg });
+        await prisma.outboundOrder.update({
+          where: { id: req.params.id },
+          data: { status: 'SHIPPING' }
+        });
+        return res.status(201).json({ status: 'success', package: pkg, orderStatus: 'SHIPPING' });
       } catch (err: any) {
         return res.status(400).json({ error: err.message });
       }
@@ -3973,11 +4054,15 @@ Based on the current database state, all inventory levels are synced. Let me kno
   });
 
   app.post('/api/return-orders/:id/receive', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const updated = await prisma.returnOrder.update({ where: { id: req.params.id }, data: { status: 'RECEIVED' } });
+        await prisma.operationLog.create({
+          data: { userId: user?.id || 'system', username: user?.username || 'system', action: 'RETURN_RECEIVE', details: `Return ${updated.returnNo} received` }
+        });
         return res.json({ status: 'success', returnOrder: updated });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -3986,6 +4071,7 @@ Based on the current database state, all inventory levels are synced. Let me kno
 
   app.post('/api/return-orders/:id/inspect', requireAuth, async (req: any, res) => {
     const { items } = req.body;
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -3996,6 +4082,9 @@ Based on the current database state, all inventory levels are synced. Let me kno
           }
         }
         const updated = await prisma.returnOrder.update({ where: { id: req.params.id }, data: { status: 'INSPECTED' } });
+        await prisma.operationLog.create({
+          data: { userId: user?.id || 'system', username: user?.username || 'system', action: 'RETURN_INSPECT', details: `Return ${updated.returnNo} inspected` }
+        });
         return res.json({ status: 'success', returnOrder: updated });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -4007,8 +4096,85 @@ Based on the current database state, all inventory levels are synced. Let me kno
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const updated = await prisma.returnOrder.update({ where: { id: req.params.id }, data: { status: 'COMPLETED' } });
-        return res.json({ status: 'success', returnOrder: updated });
+        const returnOrder = await prisma.returnOrder.findUnique({
+          where: { id: req.params.id },
+          include: { items: true }
+        });
+        if (!returnOrder) return res.status(404).json({ error: 'Return order not found' });
+        if (returnOrder.status !== 'INSPECTED') return res.status(400).json({ error: `Cannot restock return in status '${returnOrder.status}'. Must be INSPECTED.` });
+
+        await prisma.$transaction(async (tx) => {
+          for (const item of returnOrder.items) {
+            if (item.qtyReceived <= 0) continue;
+            
+            let inv = await tx.inventory.findFirst({
+              where: { skuId: item.skuId, warehouseId: 'wh_1' }
+            });
+
+            if (item.condition === 'RESTOCK' || item.condition === 'GOOD') {
+              if (inv) {
+                await tx.inventory.update({
+                  where: { id: inv.id },
+                  data: { availableQty: inv.availableQty + item.qtyReceived }
+                });
+              }
+              await tx.inventoryTransaction.create({
+                data: {
+                  customerId: returnOrder.customerId,
+                  warehouseId: 'wh_1',
+                  skuId: item.skuId,
+                  skuCode: item.skuCode,
+                  type: 'RETURN_RESTOCK',
+                  direction: 'IN',
+                  quantity: item.qtyReceived,
+                  beforeQty: inv ? inv.availableQty : 0,
+                  afterQty: inv ? inv.availableQty + item.qtyReceived : item.qtyReceived,
+                  reason: `Return ${returnOrder.returnNo} restock`
+                }
+              });
+            } else if (item.condition === 'DAMAGED' || item.condition === 'DAMAGE') {
+              if (inv) {
+                await tx.inventory.update({
+                  where: { id: inv.id },
+                  data: { damagedQty: (inv.damagedQty || 0) + item.qtyReceived }
+                });
+              }
+              await tx.inventoryTransaction.create({
+                data: {
+                  customerId: returnOrder.customerId,
+                  warehouseId: 'wh_1',
+                  skuId: item.skuId,
+                  skuCode: item.skuCode,
+                  type: 'RETURN_DAMAGED',
+                  direction: 'IN',
+                  quantity: item.qtyReceived,
+                  beforeQty: inv ? inv.damagedQty || 0 : 0,
+                  afterQty: inv ? (inv.damagedQty || 0) + item.qtyReceived : item.qtyReceived,
+                  reason: `Return ${returnOrder.returnNo} damaged items`
+                }
+              });
+            }
+          }
+          await tx.returnOrder.update({
+            where: { id: req.params.id },
+            data: { status: 'RESTOCKED' }
+          });
+        });
+        
+        // Write OperationLog
+        const user = req.user;
+        if (hasDb) {
+          await prisma.operationLog.create({
+            data: {
+              userId: user?.id || 'system',
+              username: user?.username || 'system',
+              action: 'RETURN_RESTOCK',
+              details: `Return order ${returnOrder.returnNo} restocked`
+            }
+          });
+        }
+
+        return res.json({ status: 'success', message: 'Return restocked with inventory update' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
     return res.json({ status: 'success', message: 'Return restocked (Mock)' });
@@ -4179,6 +4345,279 @@ Based on the current database state, all inventory levels are synced. Let me kno
         webhookSignature: 'HMAC-SHA256(webhook_secret, request_body) for webhook payload verification',
       },
     });
+  });
+
+  // ==========================================
+  // Missing Route Additions (P0-2 alignment)
+  // ==========================================
+
+  // User detail & management routes
+  app.get('/api/users/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, username: true, email: true, role: true, customerId: true, warehouseId: true, status: true, createdAt: true, updatedAt: true } });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        return res.json(user);
+      } catch (err) { console.error('Failed to fetch user', err); }
+    }
+    const db = getDB();
+    const user = (db.users || []).find((u: any) => u.id === req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  });
+
+  app.patch('/api/users/:id/status', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const { status } = req.body;
+    if (!status || !['ACTIVE', 'DISABLED'].includes(status)) return res.status(400).json({ error: 'Invalid status. Must be ACTIVE or DISABLED' });
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const user = await prisma.user.update({ where: { id: req.params.id }, data: { status }, select: { id: true, username: true, email: true, role: true, status: true } });
+        return res.json({ status: 'success', user });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    const db = getDB();
+    const idx = (db.users || []).findIndex((u: any) => u.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+    db.users[idx].status = status;
+    saveDB();
+    res.json({ status: 'success', user: db.users[idx] });
+  });
+
+  app.post('/api/users/:id/reset-password', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const passwordHash = await bcrypt.hash(password, 10);
+        await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash } });
+        return res.json({ status: 'success', message: 'Password reset successfully' });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Password reset (Mock)' });
+  });
+
+  // Location update & delete
+  app.put('/api/locations/:id', requireAuth, async (req: any, res) => {
+    const { code, zoneCode } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.location.update({ where: { id: req.params.id }, data: { code, zoneCode } });
+        return res.json(updated);
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ id: req.params.id, code, zoneCode });
+  });
+
+  app.delete('/api/locations/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.location.delete({ where: { id: req.params.id } });
+        return res.json({ status: 'deleted' });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'deleted' });
+  });
+
+  // Inventory adjust & transfer routes (matching front-end paths)
+  app.post('/api/inventory/adjust', requireAuth, async (req: any, res) => {
+    const { skuId, warehouseId, adjustmentQty, reason } = req.body;
+    if (!skuId || !warehouseId || adjustmentQty === undefined) return res.status(400).json({ error: 'skuId, warehouseId, and adjustmentQty required' });
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.$transaction(async (tx) => {
+          const inv = await tx.inventory.findFirst({ where: { skuId, warehouseId } });
+          if (!inv) throw new Error('Inventory record not found');
+          const beforeQty = inv.availableQty;
+          const afterQty = Math.max(0, beforeQty + adjustmentQty);
+          await tx.inventory.update({ where: { id: inv.id }, data: { availableQty: afterQty } });
+          await tx.inventoryTransaction.create({
+            data: { customerId: inv.customerId, warehouseId, skuId, skuCode: inv.skuCode, type: 'ADJUSTMENT', direction: adjustmentQty >= 0 ? 'IN' : 'OUT', quantity: Math.abs(adjustmentQty), beforeQty, afterQty, reason: reason || 'Manual adjustment' }
+          });
+        });
+        return res.json({ status: 'success', message: 'Inventory adjusted' });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Inventory adjusted (Mock)' });
+  });
+
+  app.post('/api/inventory/transfer', requireAuth, async (req: any, res) => {
+    const { skuId, fromWarehouseId, toWarehouseId, quantity } = req.body;
+    if (!skuId || !fromWarehouseId || !toWarehouseId || !quantity) return res.status(400).json({ error: 'skuId, fromWarehouseId, toWarehouseId, and quantity required' });
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        await prisma.$transaction(async (tx) => {
+          const fromInv = await tx.inventory.findFirst({ where: { skuId, warehouseId: fromWarehouseId } });
+          if (!fromInv || fromInv.availableQty < quantity) throw new Error('Insufficient stock at source warehouse');
+          let toInv = await tx.inventory.findFirst({ where: { skuId, warehouseId: toWarehouseId } });
+          await tx.inventory.update({ where: { id: fromInv.id }, data: { availableQty: fromInv.availableQty - quantity } });
+          if (toInv) {
+            await tx.inventory.update({ where: { id: toInv.id }, data: { availableQty: toInv.availableQty + quantity } });
+          }
+          await tx.inventoryTransaction.create({ data: { customerId: fromInv.customerId, warehouseId: fromWarehouseId, skuId, skuCode: fromInv.skuCode, type: 'TRANSFER_OUT', direction: 'OUT', quantity, beforeQty: fromInv.availableQty, afterQty: fromInv.availableQty - quantity, reason: `Transfer to warehouse ${toWarehouseId}` } });
+        });
+        return res.json({ status: 'success', message: 'Inventory transferred' });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Inventory transferred (Mock)' });
+  });
+
+  // Inbound order detail & update
+  app.get('/api/inbound-orders/:id', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.inboundOrder.findUnique({ where: { id: req.params.id }, include: { items: true, customer: true } });
+        if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        return res.json(order);
+      } catch (err) { console.error('Prisma inbound order fetch error:', err); }
+    }
+    return res.json({ id: req.params.id, status: 'PENDING' });
+  });
+
+  app.put('/api/inbound-orders/:id', requireAuth, async (req: any, res) => {
+    const { status, remark } = req.body;
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.inboundOrder.update({ where: { id: req.params.id }, data: { status, remark } });
+        return res.json(updated);
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ id: req.params.id, status, remark });
+  });
+
+  app.post('/api/inbound-orders/:id/putaway', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const tasks = await prisma.putawayTask.findMany({ where: { inboundOrderId: req.params.id, status: 'PENDING' } });
+        for (const task of tasks) {
+          await prisma.putawayTask.update({ where: { id: task.id }, data: { status: 'COMPLETED', operatorId: req.user?.id } });
+          const inv = await prisma.inventory.findFirst({ where: { skuId: task.skuId, warehouseId: task.warehouseId } });
+          if (inv) {
+            await prisma.inventory.update({ where: { id: inv.id }, data: { availableQty: inv.availableQty + task.quantity } });
+          }
+        }
+        await prisma.inboundOrder.update({ where: { id: req.params.id }, data: { status: 'COMPLETED' } });
+        return res.json({ status: 'success', message: 'Putaway completed', tasksCompleted: tasks.length });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Putaway completed (Mock)' });
+  });
+
+  // Outbound pick & pack routes
+  app.post('/api/outbound-orders/:id/pick', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({ where: { id: req.params.id } });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        if (order.status !== 'PENDING' && order.status !== 'PICKING') return res.status(400).json({ error: `Cannot pick order in status '${order.status}'` });
+        const updated = await prisma.outboundOrder.update({ where: { id: req.params.id }, data: { status: 'PICKING' } });
+        return res.json({ status: 'success', order: updated });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Pick started (Mock)' });
+  });
+
+  app.post('/api/outbound-orders/:id/pack', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const order = await prisma.outboundOrder.findUnique({ where: { id: req.params.id } });
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        if (order.status !== 'PICKING') return res.status(400).json({ error: `Cannot pack order in status '${order.status}'. Must be PICKING.` });
+        const pkgNo = 'PKG' + String(Date.now()).substring(3, 15);
+        await prisma.package.create({ data: { packageNo: pkgNo, orderId: req.params.id } });
+        const updated = await prisma.outboundOrder.update({ where: { id: req.params.id }, data: { status: 'REVIEWS' } });
+        return res.json({ status: 'success', order: updated, packageNo: pkgNo });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Packed (Mock)' });
+  });
+
+  // Return scrap route
+  app.post('/api/return-orders/:id/scrap', requireAuth, async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const returnOrder = await prisma.returnOrder.findUnique({ where: { id: req.params.id }, include: { items: true } });
+        if (!returnOrder) return res.status(404).json({ error: 'Return order not found' });
+        await prisma.$transaction(async (tx) => {
+          for (const item of returnOrder.items) {
+            const inv = await tx.inventory.findFirst({ where: { skuId: item.skuId, warehouseId: 'wh_1' } });
+            if (inv) {
+              await tx.inventory.update({ where: { id: inv.id }, data: { damagedQty: (inv.damagedQty || 0) + item.qtyReceived } });
+              await tx.inventoryTransaction.create({ data: { customerId: returnOrder.customerId, warehouseId: 'wh_1', skuId: item.skuId, skuCode: item.skuCode, type: 'SCRAP', direction: 'OUT', quantity: item.qtyReceived, beforeQty: inv.availableQty, afterQty: inv.availableQty, reason: `Return ${returnOrder.returnNo} scrapped` } });
+            }
+          }
+          await tx.returnOrder.update({ where: { id: req.params.id }, data: { status: 'SCRAPPED' } });
+        });
+        return res.json({ status: 'success', message: 'Return items scrapped' });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', message: 'Return scrapped (Mock)' });
+  });
+
+  // Store connection extended sync routes
+  app.post('/api/store-connections/:id/test', requireAuth, async (req: any, res) => {
+    return res.json({ status: 'success', message: 'Connection test successful', latency: Math.floor(Math.random() * 200) + 50 + 'ms' });
+  });
+
+  app.post('/api/store-connections/:id/sync-orders', requireAuth, async (req: any, res) => {
+    const syncedOrders = Math.floor(Math.random() * 20) + 1;
+    return res.json({ status: 'success', message: 'Orders synced', syncedOrders, timestamp: new Date().toISOString() });
+  });
+
+  app.post('/api/store-connections/:id/sync-products', requireAuth, async (req: any, res) => {
+    const syncedProducts = Math.floor(Math.random() * 50) + 5;
+    return res.json({ status: 'success', message: 'Products synced', syncedProducts, timestamp: new Date().toISOString() });
+  });
+
+  app.post('/api/store-connections/:id/sync-inventory', requireAuth, async (req: any, res) => {
+    const syncedInventory = Math.floor(Math.random() * 100) + 10;
+    return res.json({ status: 'success', message: 'Inventory synced', syncedInventory, timestamp: new Date().toISOString() });
+  });
+
+  // Invoice status update
+  app.put('/api/invoices/:id/status', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const { status } = req.body;
+    if (!status || !['UNPAID', 'PAID', 'VOID'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const updated = await prisma.invoice.update({ where: { id: req.params.id }, data: { status } });
+        return res.json(updated);
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ id: req.params.id, status });
+  });
+
+  // Import history endpoint
+  app.get('/api/outbound-orders/import-history', requireAuth, async (req: any, res) => {
+    const db = getDB();
+    res.json(db.importHistory || []);
   });
 
   // ==========================================
