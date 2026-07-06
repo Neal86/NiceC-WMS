@@ -8,10 +8,14 @@ export interface User {
   username: string;
   email: string;
   role: 'admin' | 'operator' | 'manager' | 'CLIENT' | 'SUPER_ADMIN' | 'WAREHOUSE_MANAGER' | 'WAREHOUSE_OPERATOR';
-  avatar: string;
+  avatar?: string;
   token?: string;
   customerId?: string;
   warehouseId?: string;
+  status?: string;
+  passwordHash?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Warehouse {

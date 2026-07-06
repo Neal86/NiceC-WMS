@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
+import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 
 describe('API Key Security', () => {
   describe('Key Hashing', () => {
     it('should hash API keys before storing', async () => {
-      const bcrypt = await import('bcryptjs');
-      const rawKey = 'nwc_' + require('crypto').randomBytes(24).toString('hex');
+      const rawKey = 'nwc_' + crypto.randomBytes(24).toString('hex');
       const hash = await bcrypt.hash(rawKey, 10);
 
       expect(hash).not.toBe(rawKey);
-      expect(hash.startsWith('$2a$')).toBe(true);
+      expect(hash.startsWith('$2a$') || hash.startsWith('$2b$') || hash.startsWith('$2y$')).toBe(true);
 
       // Verify the hash matches the original key
       const isValid = await bcrypt.compare(rawKey, hash);
@@ -82,8 +83,7 @@ describe('API Key Security', () => {
     });
 
     it('should hash webhook secrets bcrypt', async () => {
-      const bcrypt = await import('bcryptjs');
-      const rawSecret = 'whsec_' + require('crypto').randomBytes(16).toString('hex');
+      const rawSecret = 'whsec_' + crypto.randomBytes(16).toString('hex');
       const hash = await bcrypt.hash(rawSecret, 10);
 
       expect(hash).not.toBe(rawSecret);
@@ -94,7 +94,6 @@ describe('API Key Security', () => {
 
   describe('API Key Authentication', () => {
     it('should validate API key against stored hash', async () => {
-      const bcrypt = await import('bcryptjs');
       const rawKey = 'nwc_valid_test_key_12345678';
       const storedHash = await bcrypt.hash(rawKey, 10);
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { billingApi } from '../../api';
 import { Landmark, RefreshCw, DollarSign, CreditCard, FileText, TrendingUp, CheckCircle2, Clock, Plus, Trash2, Edit, Save, Shield, Zap } from 'lucide-react';
 
@@ -155,7 +155,7 @@ export default function BillingView({ currentUser }: Props) {
             </table>
           </div>
         )
-      ) : (
+      ) : tab === 'invoices' ? (
         invoices.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-lg border"><CreditCard className="w-12 h-12 mx-auto text-gray-300 mb-3" /><p className="text-gray-500">暂无账单</p></div>
         ) : (
@@ -180,7 +180,7 @@ export default function BillingView({ currentUser }: Props) {
             </table>
           </div>
         )
-      ) : tab === 'rules' ? (
+      ) : (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <p className="text-sm text-gray-500">管理计费规则，费用生成时将按规则自动计算</p>

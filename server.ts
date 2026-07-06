@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'node:crypto';
 import { createServer as createViteServer } from 'vite';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -1913,7 +1914,7 @@ async function startServer() {
   });
 
   // POST /api/outbound-orders/:id/print-label
-  app.post('/api/outbound-orders/:id/print-label', (req, res) => {
+  app.post('/api/outbound-orders/:id/print-label', requireAuth, (req, res) => {
     const db = getDB();
     const ord = db.outboundOrders.find(o => o.id === req.params.id);
     if (!ord) return res.status(404).json({ error: 'Order not found' });
@@ -1924,7 +1925,7 @@ async function startServer() {
   });
 
   // POST /api/outbound-orders/:id/mark-label-printed
-  app.post('/api/outbound-orders/:id/mark-label-printed', (req, res) => {
+  app.post('/api/outbound-orders/:id/mark-label-printed', requireAuth, (req, res) => {
     const db = getDB();
     const ord = db.outboundOrders.find(o => o.id === req.params.id);
     if (!ord) return res.status(404).json({ error: 'Order not found' });
@@ -1935,13 +1936,13 @@ async function startServer() {
   });
 
   // POST /api/outbound-orders/batch-print-pick-list
-  app.post('/api/outbound-orders/batch-print-pick-list', (req, res) => {
+  app.post('/api/outbound-orders/batch-print-pick-list', requireAuth, (req, res) => {
     const { orderIds } = req.body;
     res.json({ status: 'success', message: `批量打印发货清单任务成功发送，包含 ${orderIds?.length || 0} 个出库单。` });
   });
 
   // POST /api/outbound-orders/export
-  app.post('/api/outbound-orders/export', (req, res) => {
+  app.post('/api/outbound-orders/export', requireAuth, (req, res) => {
     res.json({ status: 'success', downloadUrl: 'https://mockpdf.wms.nicec.net/export/orders_export_temp.xlsx' });
   });
 
@@ -2797,11 +2798,11 @@ async function startServer() {
     }
   ];
 
-  app.get('/api/wms-ai-assistant/history', (req, res) => {
+  app.get('/api/wms-ai-assistant/history', requireAuth, (req, res) => {
     res.json(aiHistory);
   });
 
-  app.delete('/api/wms-ai-assistant/history', (req, res) => {
+  app.delete('/api/wms-ai-assistant/history', requireAuth, (req, res) => {
     aiHistory = [
       {
         id: 'msg_welcome',
@@ -3026,8 +3027,8 @@ async function startServer() {
     res.json(comments);
   });
 
-  // Admin Mirror Routes
-  app.get('/api/admin/feedback', (req, res) => {
+  // Admin Mirror Routes (admin-only)
+  app.get('/api/admin/feedback', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), (req, res) => {
     const db = getDB();
     const { type, status, priority, userId, warehouseId, operationScope, search } = req.query;
 
@@ -3056,7 +3057,7 @@ async function startServer() {
     res.json(resolvedList);
   });
 
-  app.get('/api/admin/feedback/:id', (req, res) => {
+  app.get('/api/admin/feedback/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), (req, res) => {
     const db = getDB();
     const feedback = db.feedbacks.find(f => f.id === req.params.id);
     if (!feedback) {
@@ -3066,7 +3067,7 @@ async function startServer() {
     res.json({ ...feedback, comments });
   });
 
-  app.patch('/api/admin/feedback/:id', (req, res) => {
+  app.patch('/api/admin/feedback/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), (req, res) => {
     const db = getDB();
     const index = db.feedbacks.findIndex(f => f.id === req.params.id);
     if (index === -1) {
@@ -3095,7 +3096,7 @@ async function startServer() {
     res.json({ status: 'success', feedback: updated });
   });
 
-  app.post('/api/admin/feedback/:id/assign', (req, res) => {
+  app.post('/api/admin/feedback/:id/assign', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), (req, res) => {
     const db = getDB();
     const index = db.feedbacks.findIndex(f => f.id === req.params.id);
     if (index === -1) {
@@ -3111,7 +3112,7 @@ async function startServer() {
     res.json({ status: 'success', feedback: db.feedbacks[index] });
   });
 
-  app.post('/api/admin/feedback/:id/status', (req, res) => {
+  app.post('/api/admin/feedback/:id/status', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), (req, res) => {
     const db = getDB();
     const index = db.feedbacks.findIndex(f => f.id === req.params.id);
     if (index === -1) {
@@ -3134,22 +3135,25 @@ async function startServer() {
   // ==========================================
   // Dashboard Metrics API
   // ==========================================
-  app.get('/api/dashboard/summary', (req, res) => {
+  app.get('/api/dashboard/summary', requireAuth, (req: any, res) => {
     const db = getDB();
-    const pendingOrders = db.outboundOrders.filter(o => o.status === 'PENDING').length;
-    const shippedOrders = db.outboundOrders.filter(o => o.status === 'SHIPPED').length;
-    const exceptionOrders = db.outboundOrders.filter(o => o.status === 'EXCEPTIONS').length;
+    const isClient = req.user.role === 'CLIENT';
+    const customerId = req.user.customerId;
+    const orders = isClient ? db.outboundOrders.filter(o => o.customerId === customerId) : db.outboundOrders;
+    const pendingOrders = orders.filter(o => o.status === 'PENDING').length;
+    const shippedOrders = orders.filter(o => o.status === 'SHIPPED').length;
+    const exceptionOrders = orders.filter(o => o.status === 'EXCEPTIONS').length;
     const totalSKUs = db.skus.length;
     
     res.json({
-      pendingOrders: pendingOrders + 3, // dynamic offset
-      shippedOrders: shippedOrders + 26146,
+      pendingOrders,
+      shippedOrders,
       exceptionOrders,
       totalSKUs
     });
   });
 
-  app.get('/api/dashboard/outbound-trend', (req, res) => {
+  app.get('/api/dashboard/outbound-trend', requireAuth, (req, res) => {
     // Return recent 7 days trends
     res.json([
       { date: '06-23', qty: 1540 },
@@ -3162,10 +3166,24 @@ async function startServer() {
     ]);
   });
 
-  app.get('/api/dashboard/channel-distribution', (req, res) => {
+  app.get('/api/dashboard/channel-distribution', requireAuth, (req: any, res) => {
     const db = getDB();
-    // Return mock distribution based on channels or mock data
-    res.json([
+    const isClient = req.user.role === 'CLIENT';
+    const customerId = req.user.customerId;
+    const orders = isClient ? db.outboundOrders.filter(o => o.customerId === customerId) : db.outboundOrders;
+    // Group by logisticsChannelId (or salesPlatform as fallback)
+    const channelOrders: Record<string, number> = {};
+    for (const o of orders) {
+      const key = (o as any).logisticsChannelId || (o as any).salesPlatform || 'Unknown';
+      channelOrders[key] = (channelOrders[key] || 0) + 1;
+    }
+    const total = Object.values(channelOrders).reduce((s: number, v: number) => s + v, 0);
+    // Resolve channel names
+    const distribution = Object.entries(channelOrders).map(([id, value]) => {
+      const chan = db.logisticsChannels.find((l: any) => l.id === id);
+      return { name: chan?.name || id, value: Math.round((value / total) * 100) };
+    });
+    res.json(distribution.length > 0 ? distribution : [
       { name: 'FEDEX FHD_G', value: 45 },
       { name: 'USPS GROUND', value: 35 },
       { name: 'UPS GROUND', value: 12 },
@@ -3810,7 +3828,7 @@ async function startServer() {
   app.post('/api/api-keys', requireAuth, async (req: any, res) => {
     const user = req.user;
     const { name, scope } = req.body;
-    const rawKey = 'nwc_' + require('crypto').randomBytes(24).toString('hex');
+    const rawKey = 'nwc_' + crypto.randomBytes(24).toString('hex');
     const keyHash = await bcrypt.hash(rawKey, 10);
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -3878,7 +3896,7 @@ async function startServer() {
   app.post('/api/webhooks', requireAuth, async (req: any, res) => {
     const user = req.user;
     const { url, events } = req.body;
-    const rawSecret = 'whsec_' + require('crypto').randomBytes(16).toString('hex');
+    const rawSecret = 'whsec_' + crypto.randomBytes(16).toString('hex');
     const secretHash = await bcrypt.hash(rawSecret, 10);
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -4211,6 +4229,12 @@ async function startServer() {
 
   app.post('/api/billing-records/generate', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
+    const { periodStart, periodEnd } = req.body;
+    if (!periodStart || !periodEnd) {
+      return res.status(400).json({ error: 'periodStart and periodEnd are required (ISO date strings)' });
+    }
+    const startDate = new Date(periodStart);
+    const endDate = new Date(periodEnd);
     if (hasDb) {
       const prisma = getPrisma();
       try {
@@ -4219,9 +4243,36 @@ async function startServer() {
         const records = [];
         for (const cust of customers) {
           for (const rule of rules) {
-            const amount = parseFloat((rule.rate * (Math.random() * 100 + 10)).toFixed(2));
+            // Check for existing records in this period to prevent duplicates
+            const existing = await prisma.billingRecord.findFirst({
+              where: { customerId: cust.id, type: rule.type, createdAt: { gte: startDate, lte: endDate } }
+            });
+            if (existing) continue;
+
+            // Calculate real quantity based on rule type
+            let quantity = 0;
+            if (rule.type === 'OUTBOUND') {
+              const orderCount = await prisma.outboundOrder.count({
+                where: { customerId: cust.id, createdTime: { gte: startDate, lte: endDate } }
+              });
+              quantity = orderCount;
+            } else if (rule.type === 'STORAGE') {
+              const inventoryCount = await prisma.inventory.count({
+                where: { customerId: cust.id }
+              });
+              quantity = Math.max(inventoryCount, 1);
+            } else if (rule.type === 'INBOUND') {
+              const inboundCount = await prisma.inboundOrder.count({
+                where: { customerId: cust.id, createdAt: { gte: startDate, lte: endDate } }
+              });
+              quantity = Math.max(inboundCount, 1);
+            } else {
+              quantity = 1;
+            }
+            const amount = parseFloat((rule.rate * quantity).toFixed(2));
+            if (amount <= 0) continue;
             const record = await prisma.billingRecord.create({
-              data: { customerId: cust.id, type: rule.type, amount, currency: 'USD', status: 'UNPAID' }
+              data: { customerId: cust.id, orderId: null, type: rule.type, amount, currency: 'USD', status: 'UNPAID' }
             });
             records.push(record);
           }
@@ -4231,7 +4282,7 @@ async function startServer() {
         return res.json({ status: 'success', generated: records.length });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
-    return res.json({ status: 'success', generated: 5 });
+    return res.json({ status: 'success', generated: 0 });
   });
 
   app.post('/api/invoices/generate', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
@@ -4595,7 +4646,7 @@ async function startServer() {
     return res.json({ status: 'success', message: 'Inventory synced', syncedInventory, timestamp: new Date().toISOString() });
   });
 
-  // Invoice status update
+  // Invoice status update with state machine validation
   app.put('/api/invoices/:id/status', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const { status } = req.body;
     if (!status || !['UNPAID', 'PAID', 'VOID'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
@@ -4603,7 +4654,21 @@ async function startServer() {
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+        if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+        // State machine: UNPAID -> PAID | VOID, PAID -> VOID, VOID -> no transitions
+        const validTransitions: Record<string, string[]> = {
+          UNPAID: ['PAID', 'VOID'],
+          PAID: ['VOID'],
+          VOID: []
+        };
+        const allowed = validTransitions[invoice.status] || [];
+        if (!allowed.includes(status)) {
+          return res.status(400).json({ error: `Cannot transition invoice from ${invoice.status} to ${status}` });
+        }
         const updated = await prisma.invoice.update({ where: { id: req.params.id }, data: { status } });
+        const ws = getWebSocket();
+        ws?.emit('invoice.statusChanged', { invoiceId: updated.id, invoiceNo: updated.invoiceNo, oldStatus: invoice.status, newStatus: updated.status }, updated.customerId);
         return res.json(updated);
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }

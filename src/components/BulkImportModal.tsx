@@ -1,6 +1,7 @@
-import { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, Loader2, Download, Info } from 'lucide-react';
-import { bulkImport } from '../api';
+import { outboundApi } from '../api';
+const bulkImport = outboundApi.bulkImport;
 
 interface ImportRow {
   orderNo: string;

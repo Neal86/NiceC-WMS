@@ -1,3 +1,7 @@
+/**
+ * Build-time helper to generate .wms-runtime/server.ts
+ * This replicates the file generation part of server-bootstrap.ts without starting the server.
+ */
 import fs from 'fs';
 import path from 'path';
 
@@ -5,33 +9,30 @@ const sourcePath = path.join(process.cwd(), 'server.ts');
 const runtimeDir = path.join(process.cwd(), '.wms-runtime');
 const runtimeServerPath = path.join(runtimeDir, 'server.ts');
 
-const injectionMarker = `  // ==========================================\n  // Vite Dev / Prod Handling`;
+const injectionMarker = `  // ==========================================\r\n  // Vite Dev / Prod Handling`;
 
-const completionRoutes = String.raw`
-  // ==========================================
-  // Runtime Completion APIs injected by server-bootstrap.ts
-  // ==========================================
-  const isAdminLike = (user: any) => {
+// Same completion routes as server-bootstrap.ts
+const isAdminLike = `const isAdminLike = (user: any) => {
     const role = (user?.role || '').toUpperCase();
     return ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'WAREHOUSE_MANAGER'].includes(role);
-  };
+  };`;
 
-  const mapRoleForPrisma = (role: string) => {
+const mapRoleForPrisma = `const mapRoleForPrisma = (role: string) => {
     const normalized = (role || 'WAREHOUSE_OPERATOR').toUpperCase();
     if (normalized === 'MANAGER') return 'WAREHOUSE_MANAGER';
     if (normalized === 'OPERATOR') return 'WAREHOUSE_OPERATOR';
     if (normalized === 'CUSTOMER') return 'CLIENT';
     if (['SUPER_ADMIN', 'ADMIN', 'WAREHOUSE_MANAGER', 'WAREHOUSE_OPERATOR', 'CLIENT'].includes(normalized)) return normalized;
     return 'WAREHOUSE_OPERATOR';
-  };
+  };`;
 
-  const publicUser = (user: any) => {
+const publicUser = `const publicUser = (user: any) => {
     if (!user) return user;
     const { passwordHash, password, ...safe } = user;
     return safe;
-  };
+  };`;
 
-  const runtimeLog = (user: any, action: string, details?: string) => {
+const runtimeLog = `const runtimeLog = (user: any, action: string, details?: string) => {
     try {
       const db = getDB();
       db.operationLogs = db.operationLogs || [];
@@ -49,8 +50,21 @@ const completionRoutes = String.raw`
     } catch (err) {
       console.warn('Runtime log failed:', err);
     }
-  };
+  };`;
 
+const completionRoutes = `
+  // ==========================================
+  // Runtime Completion APIs
+  // ==========================================
+  ${isAdminLike}
+
+  ${mapRoleForPrisma}
+
+  ${publicUser}
+
+  ${runtimeLog}
+
+  // GET /api/auth/me - Returns current user info
   app.get('/api/auth/me', requireAuth, async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -67,6 +81,7 @@ const completionRoutes = String.raw`
     return res.json({ status: 'success', user: publicUser(user || req.user) });
   });
 
+  // GET /api/users - Admin-only user list
   app.get('/api/users', requireAuth, async (req: any, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Forbidden. Admin or manager role required.' });
     const hasDb = await checkDbConnection();
@@ -83,6 +98,7 @@ const completionRoutes = String.raw`
     return res.json((db.users || []).map(publicUser));
   });
 
+  // POST /api/users - Create user (admin only, duplicates server.ts but adds enhanced fields)
   app.post('/api/users', requireAuth, async (req: any, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Forbidden. Admin or manager role required.' });
     const { username, email, name, role = 'OPERATOR', password = 'NiceC123!', customerId, warehouseId, status = 'ACTIVE' } = req.body;
@@ -132,6 +148,7 @@ const completionRoutes = String.raw`
     return res.status(201).json({ status: 'success', user: created, temporaryPassword: password });
   });
 
+  // PUT /api/users/:id - Update user
   app.put('/api/users/:id', requireAuth, async (req: any, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Forbidden. Admin or manager role required.' });
     const { role, password, ...rest } = req.body || {};
@@ -158,6 +175,7 @@ const completionRoutes = String.raw`
     return res.json({ status: 'success', user: publicUser(db.users[index]) });
   });
 
+  // POST /api/users/:id/reset-password
   app.post('/api/users/:id/reset-password', requireAuth, async (req: any, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Forbidden. Admin or manager role required.' });
     const password = req.body?.password || 'NiceC123!';
@@ -176,6 +194,7 @@ const completionRoutes = String.raw`
     return res.json({ status: 'success', message: 'Password reset recorded in fallback mode', temporaryPassword: password });
   });
 
+  // DELETE /api/users/:id - Disable user
   app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Forbidden. Admin or manager role required.' });
     const hasDb = await checkDbConnection();
@@ -196,6 +215,7 @@ const completionRoutes = String.raw`
     return res.json({ status: 'success', message: 'User disabled' });
   });
 
+  // Billing Rules CRUD
   app.post('/api/billing-rules', requireAuth, async (req: any, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Forbidden. Admin or manager role required.' });
     const { name, code, type = 'OUTBOUND', rate = 0 } = req.body;
@@ -264,6 +284,7 @@ const completionRoutes = String.raw`
     return res.json({ status: 'success', message: 'Billing rule deleted' });
   });
 
+  // Inventory Adjust
   app.post('/api/inventory/adjust', requireAuth, async (req: any, res) => {
     const { inventoryId, skuId, warehouseId, quantity, adjustQty, type = 'ADD', reason = 'Manual adjustment' } = req.body;
     const deltaRaw = Number(adjustQty ?? quantity ?? 0);
@@ -294,7 +315,7 @@ const completionRoutes = String.raw`
             operatorUserId: req.user?.id
           }
         });
-        runtimeLog(req.user, '库存调整', '${'$'}{inv.skuCode}: ${'$'}{delta}');
+        runtimeLog(req.user, '库存调整', inv.skuCode + ': ' + delta);
         return res.json({ status: 'success', inventory: updated });
       } catch (err: any) {
         return res.status(400).json({ error: err.message });
@@ -306,10 +327,11 @@ const completionRoutes = String.raw`
     const delta = type === 'SUBTRACT' || type === 'OUT' ? -Math.abs(deltaRaw) : Math.abs(deltaRaw);
     inv.availableQty = Math.max(0, (inv.availableQty || 0) + delta);
     saveDB();
-    runtimeLog(req.user, '库存调整', '${'$'}{inv.skuCode}: ${'$'}{delta}');
+    runtimeLog(req.user, '库存调整', inv.skuCode + ': ' + delta);
     return res.json({ status: 'success', inventory: inv });
   });
 
+  // Inventory Transfer
   app.post('/api/inventory/transfer', requireAuth, async (req: any, res) => {
     const { skuId, fromWarehouseId, toWarehouseId, quantity = 0, reason = 'Inventory transfer' } = req.body;
     const qty = Number(quantity);
@@ -332,7 +354,7 @@ const completionRoutes = String.raw`
           await tx.inventoryTransaction.create({ data: { customerId: fromInv.customerId, warehouseId: toWarehouseId, skuId, skuCode: fromInv.skuCode, type: 'TRANSFER_IN', direction: 'IN', quantity: qty, beforeQty: toInv.availableQty - qty, afterQty: toInv.availableQty, reason, operatorUserId: req.user?.id } });
           return toInv;
         });
-        runtimeLog(req.user, '库存转移', '${'$'}{skuId}: ${'$'}{fromWarehouseId} -> ${'$'}{toWarehouseId} x ${'$'}{qty}');
+        runtimeLog(req.user, '库存转移', skuId + ': ' + fromWarehouseId + ' -> ' + toWarehouseId + ' x ' + qty);
         return res.json({ status: 'success', inventory: result });
       } catch (err: any) {
         return res.status(400).json({ error: err.message });
@@ -350,10 +372,11 @@ const completionRoutes = String.raw`
       db.inventory.push(toInv);
     }
     saveDB();
-    runtimeLog(req.user, '库存转移', '${'$'}{skuId}: ${'$'}{fromWarehouseId} -> ${'$'}{toWarehouseId} x ${'$'}{qty}');
+    runtimeLog(req.user, '库存转移', skuId + ': ' + fromWarehouseId + ' -> ' + toWarehouseId + ' x ' + qty);
     return res.json({ status: 'success', inventory: toInv });
   });
 
+  // GET /api/feedback - List feedbacks with admin/user isolation
   app.get('/api/feedback', requireAuth, async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -371,20 +394,18 @@ const completionRoutes = String.raw`
     const rows = db.feedbacks || db.feedback || [];
     return res.json(isAdminLike(req.user) ? rows : rows.filter((f: any) => f.userId === req.user.id));
   });
-
 `;
 
 function main() {
   const source = fs.readFileSync(sourcePath, 'utf8');
   if (!source.includes(injectionMarker)) {
-    throw new Error('Unable to find Vite handling marker in server.ts; completion routes were not injected.');
+    throw new Error('Unable to find Vite handling marker in server.ts');
   }
 
   fs.mkdirSync(runtimeDir, { recursive: true });
   const generated = source.replace(injectionMarker, `${completionRoutes}\n${injectionMarker}`);
   fs.writeFileSync(runtimeServerPath, generated, 'utf8');
-  // @ts-ignore - runtime-generated file
-  import(`./.wms-runtime/server.ts`);
+  console.log('Runtime server file generated at', runtimeServerPath);
 }
 
 main();

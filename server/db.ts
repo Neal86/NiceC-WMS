@@ -28,6 +28,10 @@ export interface DBState {
   operationLogs: OperationLog[];
   feedbacks: Feedback[];
   feedbackComments: FeedbackComment[];
+  importHistory?: any[];
+  billingRules?: any[];
+  billingRecords?: any[];
+  invoices?: any[];
 }
 
 const DEFAULT_STATE: DBState = {

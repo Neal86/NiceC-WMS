@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api, { authApi, inventoryApi, outboundApi, logApi, inboundApi, putawayApi, pickApi, reviewApi, returnApi, exceptionApi, relabelApi, locationApi } from '../api';
 import { WMSAIWidget } from './wms-ai-assistant/WMSAIWidget';
 import { 

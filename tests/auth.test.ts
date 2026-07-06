@@ -94,7 +94,7 @@ describe('Auth Module', () => {
       const hash = await bcrypt.hash(password, 10);
 
       expect(hash).not.toBe(password);
-      expect(hash.startsWith('$2a$')).toBe(true);
+      expect(hash.startsWith('$2a$') || hash.startsWith('$2b$') || hash.startsWith('$2y$')).toBe(true);
 
       const isValid = await bcrypt.compare(password, hash);
       expect(isValid).toBe(true);
