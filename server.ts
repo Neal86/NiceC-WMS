@@ -16,7 +16,11 @@ import { processChat } from './server/ai-assistant';
 import { generateBillingRecords, generateInvoices, markInvoicePaid, voidInvoice, recalculateInvoice } from './server/modules/billing';
 import { buildWarehouseScopedWhere, resolveWarehouseId, requireWarehouseAccess } from './server/modules/warehouse';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'NiceC-WMS-Secret-Token-Key-2026!';
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'NiceC-WMS-Secret-Token-Key-2026!');
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is required in production.');
+  process.exit(1);
+}
 
 // Helper to decode current JWT user from headers
 function getCurrentUser(req: any) {
@@ -5052,6 +5056,23 @@ async function startServer() {
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`WMS Express Backend + Vite running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown for Docker/Coolify/kubernetes
+  const shutdown = (signal: string) => {
+    console.log(`\nReceived ${signal}; shutting down gracefully...`);
+    server.close(() => {
+      console.log('HTTP server closed.');
+      process.exit(0);
+    });
+    // Force exit after 10s if graceful close hangs
+    setTimeout(() => {
+      console.error('Forced exit after shutdown timeout.');
+      process.exit(1);
+    }, 10_000);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   // Initialize WebSocket for real-time notifications
   try {
     initWebSocket(server);
@@ -5061,6 +5082,22 @@ async function startServer() {
   }
 }
 
+// ──────────────────────────────────────────────
+// Production process-level error handlers
+// ──────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+  // Give logger time to flush, then exit with failure
+  setTimeout(() => process.exit(1), 1000);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled Rejection:', reason);
+  // Crash — unhandled rejections mean we lost async error context
+  setTimeout(() => process.exit(1), 1000);
+});
+
 startServer().catch((err) => {
   console.error('Error starting full-stack WMS server:', err);
+  process.exit(1);
 });

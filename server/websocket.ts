@@ -8,7 +8,14 @@ import { Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'NiceC-WMS-Secret-Token-Key-2026!';
+const JWT_SECRET = (() => {
+  const secret = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'NiceC-WMS-Secret-Token-Key-2026!');
+  if (!secret) {
+    console.error('FATAL: JWT_SECRET environment variable is required in production.');
+    process.exit(1);
+  }
+  return secret;
+})();
 
 interface AuthenticatedSocket extends WebSocket {
   userId?: string;

@@ -7,8 +7,22 @@ const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim());
 
 export function helmetConfig() {
+  // Production: enable CSP with relaxed rules for React inline styles.
+  // Dev: disable CSP for hot-reload compatibility.
   return helmet({
-    contentSecurityPolicy: isProduction ? undefined : false,
+    contentSecurityPolicy: isProduction ? {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'", ...(process.env.API_BASE_URL ? [process.env.API_BASE_URL] : [])],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    } : false,
     crossOriginEmbedderPolicy: false,
   });
 }
@@ -31,9 +45,11 @@ export function corsMiddleware() {
     if (isProduction) {
       if (origin && allowedOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
-      } else if (!origin) {
-        res.setHeader('Access-Control-Allow-Origin', '*');
+      } else if (origin) {
+        // Origin not allowed; do not set ACAO header (browser will reject)
+        return res.status(403).json({ success: false, error: { code: 'CORS_ERROR', message: 'Origin not allowed' } });
       }
+      // No origin header (server-to-server or curl) — allow
     } else {
       res.setHeader('Access-Control-Allow-Origin', origin || '*');
     }

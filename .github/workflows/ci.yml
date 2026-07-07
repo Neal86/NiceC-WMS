@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, fix/complete-wms-functions]
   pull_request:
     branches: [main]
 
@@ -47,16 +47,63 @@ jobs:
         env:
           DATABASE_URL: postgresql://nicec_wms:test_password@localhost:5432/nicec_wms_test?schema=public
 
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Build frontend + backend
+        run: npm run build
+        env:
+          NODE_ENV: production
+
       - name: Run unit tests
         run: npm run test:unit
         env:
           DATABASE_URL: postgresql://nicec_wms:test_password@localhost:5432/nicec_wms_test?schema=public
           NODE_ENV: test
 
-      - name: Run TypeScript type check
-        run: npx tsc --noEmit
-
-      - name: Build frontend
-        run: npm run build
+      - name: Prime database (migrate + seed)
+        run: |
+          npx prisma db push --accept-data-loss
+          npx prisma db seed
         env:
-          NODE_ENV: production
+          DATABASE_URL: postgresql://nicec_wms:test_password@localhost:5432/nicec_wms_test?schema=public
+
+      - name: Start server for smoke tests
+        run: |
+          PORT=3099 node dist/server.cjs &
+          sleep 5
+          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:3099/api/health
+        env:
+          DATABASE_URL: postgresql://nicec_wms:test_password@localhost:5432/nicec_wms_test?schema=public
+          JWT_SECRET: ci-test-secret-key-not-for-production
+          ENABLE_JSON_FALLBACK: false
+          PORT: 3099
+
+      - name: Run smoke tests
+        run: |
+          BASE_URL=http://localhost:3099 npx tsx scripts/smoke-test.ts
+        env:
+          DATABASE_URL: postgresql://nicec_wms:test_password@localhost:5432/nicec_wms_test?schema=public
+
+      - name: Run full function checks
+        run: |
+          BASE_URL=http://localhost:3099 npx tsx scripts/full-function-check.ts
+        env:
+          DATABASE_URL: postgresql://nicec_wms:test_password@localhost:5432/nicec_wms_test?schema=public
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: nicec-wms:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
