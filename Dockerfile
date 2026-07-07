@@ -14,7 +14,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run prisma:generate
 RUN npm run build
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev && npm install --no-save prisma
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app

@@ -23,8 +23,6 @@ services:
       dockerfile: Dockerfile
     container_name: nicec-wms-app
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       NODE_ENV: production
       PORT: 3000
