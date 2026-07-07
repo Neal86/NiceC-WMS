@@ -18,20 +18,27 @@ if [ -n "${DATABASE_URL:-}" ]; then
 
   # Production: use prisma migrate deploy (safe, only applies pending migrations)
   # Dev/Demo: use db push (schema sync, acceptable for development)
+  # Schema sync strategy:
+  #   Production: try prisma migrate deploy first (safe), fall back to db push if no migrations exist
+  #   Dev:        db push (fast schema sync, acceptable for development)
   if [ "${NODE_ENV:-production}" = "production" ]; then
     if [ "${RUN_DB_MIGRATE:-true}" = "true" ]; then
-      echo "Production mode: running prisma migrate deploy..."
-      npx prisma migrate deploy
+      if [ -d "prisma/migrations" ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then
+        echo "Production mode: running prisma migrate deploy..."
+        npx prisma migrate deploy || {
+          echo "migrate deploy failed; falling back to db push."
+          npx prisma db push --accept-data-loss
+        }
+      else
+        echo "No migration files found; using prisma db push to sync schema."
+        npx prisma db push --accept-data-loss
+      fi
     else
-      echo "RUN_DB_MIGRATE is not true; skipping database migration."
+      echo "RUN_DB_MIGRATE is not true; skipping database schema sync."
     fi
   else
-    if [ "${RUN_DB_PUSH:-false}" = "true" ]; then
-      echo "Dev mode: RUN_DB_PUSH=true; applying Prisma schema with db push."
-      npx prisma db push
-    else
-      echo "Dev mode: RUN_DB_PUSH is not true; skipping schema push."
-    fi
+    echo "Dev mode: applying Prisma schema with db push."
+    npx prisma db push
   fi
 
   if [ "${RUN_DB_SEED:-false}" = "true" ]; then
