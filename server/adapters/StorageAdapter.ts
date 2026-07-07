@@ -29,7 +29,36 @@ export interface StorageReportResponse {
   dailyCost: number;
 }
 
+export interface StorageUploadResponse {
+  url: string;
+  key: string;
+  size: number;
+}
+
 export class StorageAdapter {
+  async upload(fileName: string, buffer: Buffer, mimeType: string): Promise<StorageUploadResponse> {
+    return {
+      url: `https://mock-storage.nicec.net/uploads/${fileName}`,
+      key: `uploads/${Date.now()}-${fileName}`,
+      size: buffer.length,
+    };
+  }
+
+  async getSignedUrl(key: string, expiresInSeconds: number = 3600): Promise<{ url: string; key: string; expiresAt: string }> {
+    return {
+      url: `https://mock-storage.nicec.net/${key}?signature=mock&expires=${expiresInSeconds}`,
+      key,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+    };
+  }
+
+  async delete(key: string): Promise<{ success: boolean; message: string }> {
+    return {
+      success: true,
+      message: `File ${key} deleted successfully.`,
+    };
+  }
+
   async allocateSlot(request: StorageSlotRequest): Promise<StorageSlotResponse> {
     return {
       slotId: `SLOT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,

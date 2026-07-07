@@ -314,9 +314,9 @@ async function main() {
   // Seeding Billing Rules
   await prisma.billingRule.createMany({
     data: [
-      { id: 'br_1', name: '出库单操作费 (Outbound Handling Fee)', code: 'OUTBOUND_FEE', type: 'OUTBOUND', rate: 2.5 },
-      { id: 'br_2', name: '仓储费 (Storage Fee/cbm/day)', code: 'STORAGE_FEE', type: 'STORAGE', rate: 0.1 },
-      { id: 'br_3', name: '入库理货费 (Inbound Sorting Fee)', code: 'INBOUND_FEE', type: 'INBOUND', rate: 1.5 }
+      { id: 'br_1', name: '出库单操作费 (Outbound Handling Fee)', code: 'OUTBOUND_FEE', type: 'OUTBOUND', unit: 'ORDER', rate: 2.5, minCharge: 2.5 },
+      { id: 'br_2', name: '仓储费 (Storage Fee/cbm/day)', code: 'STORAGE_FEE', type: 'STORAGE', unit: 'CBM', rate: 0.1 },
+      { id: 'br_3', name: '入库理货费 (Inbound Sorting Fee)', code: 'INBOUND_FEE', type: 'INBOUND', unit: 'ITEM', rate: 1.5 }
     ]
   }).catch(() => {});
 

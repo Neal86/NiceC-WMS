@@ -1,7 +1,7 @@
 # NiceC-WMS Codebase Index
 
 > Last updated: 2026-07-05
-> Branch: `fix/complete-wms-functions`
+> Branch: `fix/complete-real-production-app`
 
 ## Tech Stack
 - **Frontend:** React 19, TypeScript, Vite 6, Tailwind CSS 4, Lucide React, Motion
@@ -35,6 +35,13 @@
 | `tests/inventory.test.ts` | Stock reservation/release/ship/return restock/adjustment |
 | `tests/billing.test.ts` | Rule CRUD, record generation, invoice generation, client isolation |
 | `tests/api-key-masking.test.ts` | Key hashing, masking, webhook secret security |
+
+### `/server/modules/` - Business Logic Modules
+| File | Purpose |
+|------|---------|
+| `server/modules/warehouse.ts` | Warehouse scoping helpers: buildWarehouseScopedWhere, assertWarehouseAccess, requireWarehouseAccess, resolveWarehouseId |
+| `server/modules/billing.ts` | Real billing engine: calculateBillingAmount, resolveBillableSources, generateBillingRecords, generateInvoices |
+| `server/modules/index.ts` | Module re-exports |
 
 ### `/server/` - Backend Helpers
 | File | Purpose |
@@ -304,3 +311,21 @@ Added `requireRole` to sensitive routes:
 - CarrierAdapter, StoreAdapter, StorageAdapter (mock implementations)
 - Routes: POST /api/adapters/carrier/ship|rates, /store/sync-*, /storage/allocate|report
 - Integration Center delegates to adapters, no mock logic in pages
+
+### Stage 5 — Warehouse Permission Isolation (Completed)
+- Created `server/modules/warehouse.ts` with:
+  - `buildWarehouseScopedWhere(user)` — builds Prisma `where` with warehouse filter
+  - `assertWarehouseAccess(user, warehouseId)` — throws on mismatch
+  - `requireWarehouseAccess(user, warehouseId)` — returns boolean
+  - `resolveWarehouseId(user, fallback)` — returns user's warehouseId or fallback
+- Created `server/modules/index.ts` — re-exports all module functions
+- Removed all `'wh_1'` hardcoded references from database operations in `server.ts`:
+  - Inbound order create (default from user context)
+  - Outbound order create (reservation + transaction logs)
+  - Outbound order update (restore + recreate reservations)
+  - Return restock (RESTOCK + DAMAGED transactions)
+  - Return scrap (SCRAP transaction)
+  - Wave pick task generation (pickTask.warehouseId)
+  - Bulk import (stock check + reservation + transaction)
+- Remaining `'wh_1'` only in JSON fallback mock data blocks (safe)
+- Build ✅, lint ✅ after changes

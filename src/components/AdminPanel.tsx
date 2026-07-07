@@ -5,7 +5,7 @@ import {
   Edit, Check, X, HelpCircle, Save, CheckCircle, FileText,
   AlertTriangle, Play, RefreshCw, BarChart
 } from 'lucide-react';
-import { logApi, metadataApi, warehouseApi, customerApi, userApi } from '../api';
+import api, { logApi, metadataApi, warehouseApi, customerApi, userApi } from '../api';
 import { FeedbackManagementTable } from './feedback/FeedbackManagementTable';
 
 interface AdminPanelProps {
@@ -553,21 +553,17 @@ function RolesPermissions() {
     });
   };
 
-  const handleSave = () => {
-    alert(`角色 ${selectedRole} 的权限设定已经成功写入配置数据库！`);
-  };
-
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       <div>
         <h3 className="text-base font-bold text-slate-800">角色与权限规划</h3>
-        <p className="text-xs text-slate-400">细粒度管理不同岗位角色的 WMS 菜单与 API 访问边界</p>
+        <p className="text-xs text-slate-400">读取权限由 server/permissions.ts 控制（只读展示）</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* Left Roles Sidebar */}
         <div className="space-y-2">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">选择要配置的角色</span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">选择要查看的角色</span>
           {['ADMIN', 'MANAGER', 'OPERATOR'].map((r) => {
             const isActive = selectedRole === r;
             return (
@@ -598,16 +594,9 @@ function RolesPermissions() {
         <div className="md:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div>
-              <h4 className="text-sm font-bold text-slate-800 font-mono">配置 {selectedRole} 的具体权限范围</h4>
-              <p className="text-[11px] text-slate-400 mt-0.5">勾选或清除具体功能选项的开关</p>
+              <h4 className="text-sm font-bold text-slate-800 font-mono">{selectedRole} 的权限范围（只读）</h4>
+              <p className="text-[11px] text-slate-400 mt-0.5">权限由服务器端 server/permissions.ts 控制，前端仅作展示</p>
             </div>
-            <button
-              onClick={handleSave}
-              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs flex items-center gap-1 shadow transition-all cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>保存配置</span>
-            </button>
           </div>
 
           <div className="space-y-2.5">
@@ -1089,8 +1078,24 @@ function BillingRules() {
   const computedLabels = rules.labelServiceFee * parseFloat(testLabels);
   const computedTotal = computedStorage + computedOutbound + computedLabels;
 
-  const handleSaveRules = () => {
-    alert('全局商户计费规则与出库贴标手续费率已成功保存至财务规则数据库！');
+  const handleSaveRules = async () => {
+    try {
+      // Save billing rules via API
+      const rulesToSave = [
+        { code: 'STORAGE_CBM_DAY', name: '日常体积容积存储费 ($ / m³ / 天)', type: 'STORAGE', unit: 'CBM', rate: rules.storageCost, minCharge: 0, currency: 'USD', isActive: true },
+        { code: 'OUTBOUND_SINGLE', name: '单品单件出库作业费 ($ / 单)', type: 'OUTBOUND', unit: 'ORDER', rate: rules.outboundFeeSingle, minCharge: 0, currency: 'USD', isActive: true },
+        { code: 'OUTBOUND_MULTI', name: '单品多件/多品多件基本费 ($ / 单)', type: 'OUTBOUND', unit: 'ORDER', rate: rules.outboundFeeMulti, minCharge: 0, currency: 'USD', isActive: true },
+        { code: 'RELABEL_FEE', name: '人工贴标/纸张增值服务费 ($ / 张)', type: 'RELABEL', unit: 'ITEM', rate: rules.labelServiceFee, minCharge: 0, currency: 'USD', isActive: true },
+      ];
+      // Import billingApi dynamically
+      const { billingApi } = await import('../api');
+      for (const r of rulesToSave) {
+        await billingApi.createRule(r);
+      }
+      alert(`费率规则已保存到数据库！`);
+    } catch (err) {
+      alert('保存失败：' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
   };
 
   return (
@@ -1401,10 +1406,58 @@ function SystemSettings() {
     slackWebhook: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX',
     syncInterval: '30'
   });
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const handleSave = (e: React.FormEvent) => {
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const res = await api.get('/system-settings');
+      const data = Array.isArray(res) ? res : [];
+      const map: Record<string, string> = {};
+      for (const s of data) {
+        map[s.key] = s.value;
+      }
+      setSettings(prev => ({
+        ...prev,
+        systemName: map['wms_name'] || prev.systemName,
+        defaultLang: map['default_lang'] || prev.defaultLang,
+        enableSlack: map['enable_slack'] === 'true',
+        enableEmail: map['enable_email'] === 'true',
+        alertEmail: map['alert_email'] || prev.alertEmail,
+        slackWebhook: map['slack_webhook'] || prev.slackWebhook,
+        syncInterval: map['sync_interval'] || prev.syncInterval,
+      }));
+    } catch (err) {
+      console.error('Failed to load system settings', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert('全局 WMS 系统设置参数已被成功锁定并应用！');
+    setSaving(true);
+    try {
+      const settingsPayload = [
+        { key: 'wms_name', value: settings.systemName },
+        { key: 'default_lang', value: settings.defaultLang },
+        { key: 'enable_slack', value: String(settings.enableSlack) },
+        { key: 'enable_email', value: String(settings.enableEmail) },
+        { key: 'alert_email', value: settings.alertEmail },
+        { key: 'slack_webhook', value: settings.slackWebhook },
+        { key: 'sync_interval', value: settings.syncInterval },
+      ];
+      await api.put('/system-settings', { settings: settingsPayload });
+      alert('系统设置已保存到数据库！');
+    } catch (err) {
+      alert('保存失败：' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

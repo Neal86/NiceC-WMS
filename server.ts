@@ -13,6 +13,8 @@ import { loginSchema, outboundCreateSchema, outboundUpdateSchema, inboundCreateS
 import { carrierAdapter, storeAdapter, storageAdapter } from './server/adapters';
 import { initWebSocket, getWebSocket } from './server/websocket';
 import { processChat } from './server/ai-assistant';
+import { generateBillingRecords, generateInvoices, markInvoicePaid, voidInvoice, recalculateInvoice } from './server/modules/billing';
+import { buildWarehouseScopedWhere, resolveWarehouseId, requireWarehouseAccess } from './server/modules/warehouse';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'NiceC-WMS-Secret-Token-Key-2026!';
 
@@ -1009,6 +1011,7 @@ async function startServer() {
     const totalQty = items.reduce((sum: number, item: any) => sum + (item.qty || 1), 0);
     const totalWeight = parseFloat((totalQty * 1.2).toFixed(2));
 
+    const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -1017,7 +1020,7 @@ async function startServer() {
           // 1. Pre-verify all SKU stock levels in transaction
           for (const item of items) {
             const inv = await tx.inventory.findFirst({
-              where: { skuId: item.skuId, warehouseId: 'wh_1' }
+              where: { skuId: item.skuId, warehouseId: effectiveWhId }
             });
             if (!inv || inv.availableQty < item.qty) {
               const skuObj = await tx.sKU.findUnique({ where: { id: item.skuId } });
@@ -1070,7 +1073,7 @@ async function startServer() {
 
             // Update inventory values
             const inv = await tx.inventory.findFirst({
-              where: { skuId: item.skuId, warehouseId: 'wh_1' }
+              where: { skuId: item.skuId, warehouseId: effectiveWhId }
             });
             if (inv) {
               await tx.inventory.update({
@@ -1089,7 +1092,7 @@ async function startServer() {
                   orderItemId: newItem.id,
                   skuId: item.skuId,
                   skuCode,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   quantity: item.qty,
                   status: 'ACTIVE'
                 }
@@ -1099,7 +1102,7 @@ async function startServer() {
               await tx.inventoryTransaction.create({
                 data: {
                   customerId: resolvedCustomerId,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   skuId: item.skuId,
                   skuCode,
                   type: 'RESERVE',
@@ -1242,6 +1245,8 @@ async function startServer() {
           return res.status(400).json({ error: '已出库订单无法修改商品列表' });
         }
 
+        const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
+
         // Prepare fields for update
         const dataToUpdate: any = {};
         if (updateData.status) dataToUpdate.status = updateData.status;
@@ -1285,7 +1290,7 @@ async function startServer() {
 
               // Check stock level first
               const inv = await tx.inventory.findFirst({
-                where: { skuId: item.skuId, warehouseId: 'wh_1' }
+                where: { skuId: item.skuId, warehouseId: effectiveWhId }
               });
               if (!inv || inv.availableQty < item.qty) {
                 throw new Error(`库存不足，无法预留 SKU: ${skuCode} (可用: ${inv ? inv.availableQty : 0}, 需求: ${item.qty})`);
@@ -1320,7 +1325,7 @@ async function startServer() {
                   orderItemId: newItem.id,
                   skuId: item.skuId,
                   skuCode,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   quantity: item.qty,
                   status: 'ACTIVE'
                 }
@@ -3383,7 +3388,8 @@ async function startServer() {
 
   app.post('/api/inbound-orders', requireAuth, async (req: any, res) => {
     const user = req.user;
-    const { items = [], warehouseId = 'wh_1', remark = '-' } = req.body;
+    const { items = [], warehouseId: bodyWhId, remark = '-' } = req.body;
+    const warehouseId = bodyWhId || resolveWarehouseId(req.user, 'wh_default');
     const customerId = user.customerId || req.body.customerId || 'cust_1';
     
     const orderNo = 'ASN' + String(Date.now()).substring(3, 15);
@@ -3528,6 +3534,7 @@ async function startServer() {
   app.post('/api/waves/:id/generate-pick-tasks', requireAuth, async (req: any, res) => {
     const waveId = req.params.id;
     const hasDb = await checkDbConnection();
+    const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     if (hasDb) {
       const prisma = getPrisma();
       try {
@@ -3548,7 +3555,7 @@ async function startServer() {
                   orderId: order.id,
                   skuId: item.skuId,
                   skuCode: item.skuCode,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   quantity: item.qty,
                   status: 'PENDING'
                 }
@@ -3754,9 +3761,9 @@ async function startServer() {
       }
     }
     res.json([
-      { id: 'br_1', name: '出库单操作费 (Outbound Handling Fee)', code: 'OUTBOUND_FEE', type: 'OUTBOUND', rate: 2.5 },
-      { id: 'br_2', name: '仓储费 (Storage Fee/cbm/day)', code: 'STORAGE_FEE', type: 'STORAGE', rate: 0.1 },
-      { id: 'br_3', name: '入库理货费 (Inbound Sorting Fee)', code: 'INBOUND_FEE', type: 'INBOUND', rate: 1.5 }
+      { id: 'br_1', name: '出库单操作费 (Outbound Handling Fee)', code: 'OUTBOUND_FEE', type: 'OUTBOUND', unit: 'ORDER', rate: 2.5, minCharge: 2.5, currency: 'USD', isActive: true },
+      { id: 'br_2', name: '仓储费 (Storage Fee/cbm/day)', code: 'STORAGE_FEE', type: 'STORAGE', unit: 'CBM', rate: 0.1, minCharge: 0, currency: 'USD', isActive: true },
+      { id: 'br_3', name: '入库理货费 (Inbound Sorting Fee)', code: 'INBOUND_FEE', type: 'INBOUND', unit: 'ITEM', rate: 1.5, minCharge: 1.5, currency: 'USD', isActive: true }
     ]);
   });
 
@@ -3811,12 +3818,8 @@ async function startServer() {
       try {
         const where: any = {};
         if ((user.role || '').toUpperCase() === 'CLIENT') where.customerId = user.customerId;
-        const keys = await prisma.apiKey.findMany({ where });
-        const masked = keys.map((k: any) => ({
-          ...k,
-          key: k.key && k.key.length > 12 ? k.key.substring(0, 8) + '****' + k.key.substring(k.key.length - 4) : '****'
-        }));
-        return res.json(masked);
+        const keys = await prisma.apiKey.findMany({ where, select: { id: true, customerId: true, name: true, keyMasked: true, scope: true, status: true, createdAt: true } });
+        return res.json(keys.map(k => ({ ...k, key: k.keyMasked || '****' })));
       } catch (err) { console.error('Prisma api-keys fetch error:', err); }
     }
     res.json([
@@ -3830,14 +3833,18 @@ async function startServer() {
     const { name, scope } = req.body;
     const rawKey = 'nwc_' + crypto.randomBytes(24).toString('hex');
     const keyHash = await bcrypt.hash(rawKey, 10);
+    const keyPrefix = rawKey.substring(0, 8);
+    const keyLast4 = rawKey.substring(rawKey.length - 4);
+    const keyMasked = keyPrefix + '****' + keyLast4;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const apiKey = await prisma.apiKey.create({
-          data: { customerId: user.customerId || '', key: keyHash, status: 'ACTIVE' }
+          data: { customerId: user.customerId || '', keyHash, keyPrefix, keyLast4, keyMasked, name: name || null, scope: scope || null, status: 'ACTIVE' }
         });
-        return res.status(201).json({ ...apiKey, key: rawKey });
+        // Return raw key ONLY on creation — never again
+        return res.status(201).json({ ...apiKey, key: rawKey, keyHash: undefined });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
     return res.status(201).json({ id: 'ak_' + Date.now(), customerId: user.customerId, key: rawKey, name: name || 'API Key', status: 'ACTIVE', createdAt: new Date().toISOString() });
@@ -3849,8 +3856,12 @@ async function startServer() {
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const updated = await prisma.apiKey.update({ where: { id: req.params.id }, data: { status } });
-        return res.json(updated);
+        const updated = await prisma.apiKey.update({
+          where: { id: req.params.id },
+          data: { status },
+          select: { id: true, customerId: true, name: true, keyMasked: true, scope: true, status: true, createdAt: true }
+        });
+        return res.json({ ...updated, key: updated.keyMasked || '****' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
     return res.json({ id: req.params.id, status: status || 'ACTIVE' });
@@ -3883,9 +3894,11 @@ async function startServer() {
       try {
         const where: any = {};
         if ((user.role || '').toUpperCase() === 'CLIENT') where.customerId = user.customerId;
-        const hooks = await prisma.webhookEndpoint.findMany({ where });
-        const masked = hooks.map((h: any) => ({ ...h, secret: '••••••••' }));
-        return res.json(masked);
+        const hooks = await prisma.webhookEndpoint.findMany({
+          where,
+          select: { id: true, customerId: true, url: true, secretMasked: true, events: true, status: true, createdAt: true }
+        });
+        return res.json(hooks.map(h => ({ ...h, secret: h.secretMasked || '••••••••' })));
       } catch (err) { console.error('Prisma webhooks fetch error:', err); }
     }
     res.json([
@@ -3898,14 +3911,17 @@ async function startServer() {
     const { url, events } = req.body;
     const rawSecret = 'whsec_' + crypto.randomBytes(16).toString('hex');
     const secretHash = await bcrypt.hash(rawSecret, 10);
+    const secretLast4 = rawSecret.substring(rawSecret.length - 4);
+    const secretMasked = '••••••••' + secretLast4;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const hook = await prisma.webhookEndpoint.create({
-          data: { customerId: user.customerId || '', url, secret: secretHash, status: 'ACTIVE' }
+          data: { customerId: user.customerId || '', url, secretHash, secretLast4, secretMasked, events: events || null, status: 'ACTIVE' }
         });
-        return res.status(201).json({ ...hook, secret: rawSecret });
+        // Return raw secret ONLY on creation — never again
+        return res.status(201).json({ ...hook, secret: rawSecret, secretHash: undefined });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
     return res.status(201).json({ id: 'wh_' + Date.now(), customerId: user.customerId, url, secret: rawSecret, events, status: 'ACTIVE', createdAt: new Date().toISOString() });
@@ -3917,8 +3933,12 @@ async function startServer() {
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const updated = await prisma.webhookEndpoint.update({ where: { id: req.params.id }, data: { url, status } });
-        return res.json(updated);
+        const updated = await prisma.webhookEndpoint.update({
+          where: { id: req.params.id },
+          data: { url, status },
+          select: { id: true, customerId: true, url: true, secretMasked: true, events: true, status: true, createdAt: true }
+        });
+        return res.json({ ...updated, secret: updated.secretMasked || '••••••••' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
     return res.json({ id: req.params.id, url, status });
@@ -3951,43 +3971,69 @@ async function startServer() {
       try {
         const where: any = {};
         if ((user.role || '').toUpperCase() === 'CLIENT') where.customerId = user.customerId;
-        const connections = await prisma.storeConnection.findMany({ where });
-        return res.json(connections);
+        const connections = await prisma.storeConnection.findMany({ where, select: { id: true, customerId: true, platform: true, shopName: true, apiTokenMasked: true, lastSyncAt: true, lastSyncStatus: true, lastSyncError: true, status: true, createdAt: true } });
+        return res.json(connections.map(c => ({ ...c, apiToken: c.apiTokenMasked || null })));
       } catch (err) { console.error('Prisma store-connections fetch error:', err); }
     }
     res.json([
-      { id: 'sc_1', customerId: 'cust_1', platform: 'AMAZON', shopName: 'Yukon Amazon Store', status: 'ACTIVE', lastSyncAt: '2026-07-01T12:00:00Z', syncOrders: 156, syncInventory: true },
-      { id: 'sc_2', customerId: 'cust_1', platform: 'SHOPIFY', shopName: 'Yukon Shopify Store', status: 'ACTIVE', lastSyncAt: '2026-07-01T10:30:00Z', syncOrders: 89, syncInventory: true }
+      { id: 'sc_1', customerId: 'cust_1', platform: 'AMAZON', shopName: 'Yukon Amazon Store', apiToken: '••••••••abc1', status: 'ACTIVE', lastSyncAt: '2026-07-01T12:00:00Z' },
+      { id: 'sc_2', customerId: 'cust_1', platform: 'SHOPIFY', shopName: 'Yukon Shopify Store', apiToken: '••••••••def2', status: 'ACTIVE', lastSyncAt: '2026-07-01T10:30:00Z' }
     ]);
   });
 
   app.post('/api/store-connections', requireAuth, async (req: any, res) => {
     const user = req.user;
     const { platform, shopName, apiToken } = req.body;
+    let apiTokenHash: string | undefined;
+    let apiTokenEncrypted: string | undefined;
+    let apiTokenLast4: string | undefined;
+    let apiTokenMasked: string | undefined;
+    if (apiToken) {
+      apiTokenHash = await bcrypt.hash(apiToken, 10);
+      apiTokenLast4 = apiToken.substring(apiToken.length - 4);
+      apiTokenMasked = '••••••••' + apiTokenLast4;
+      // In production, encrypt with APP_KEY instead
+      apiTokenEncrypted = apiTokenHash;
+    }
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const conn = await prisma.storeConnection.create({
-          data: { customerId: user.customerId || '', platform, shopName, status: 'ACTIVE' }
+          data: { customerId: user.customerId || '', platform, shopName, apiTokenHash, apiTokenEncrypted, apiTokenLast4, apiTokenMasked, status: 'ACTIVE' },
+          select: { id: true, customerId: true, platform: true, shopName: true, apiTokenMasked: true, lastSyncAt: true, lastSyncStatus: true, lastSyncError: true, status: true, createdAt: true }
         });
-        return res.status(201).json(conn);
+        // Return apiToken raw ONLY on creation
+        return res.status(201).json({ ...conn, apiToken: apiToken || null });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
-    return res.status(201).json({ id: 'sc_' + Date.now(), customerId: user.customerId, platform, shopName, status: 'ACTIVE', createdAt: new Date().toISOString() });
+    return res.status(201).json({ id: 'sc_' + Date.now(), customerId: user.customerId, platform, shopName, apiToken: apiToken || null, status: 'ACTIVE', createdAt: new Date().toISOString() });
   });
 
   app.put('/api/store-connections/:id', requireAuth, async (req: any, res) => {
-    const { shopName, status } = req.body;
+    const { shopName, status, apiToken } = req.body;
+    const updateData: any = {};
+    if (shopName !== undefined) updateData.shopName = shopName;
+    if (status !== undefined) updateData.status = status;
+    if (apiToken) {
+      updateData.apiTokenHash = await bcrypt.hash(apiToken, 10);
+      updateData.apiTokenLast4 = apiToken.substring(apiToken.length - 4);
+      updateData.apiTokenMasked = '••••••••' + updateData.apiTokenLast4;
+      updateData.apiTokenEncrypted = updateData.apiTokenHash;
+    }
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const updated = await prisma.storeConnection.update({ where: { id: req.params.id }, data: { shopName, status } });
-        return res.json(updated);
+        const updated = await prisma.storeConnection.update({
+          where: { id: req.params.id },
+          data: updateData,
+          select: { id: true, customerId: true, platform: true, shopName: true, apiTokenMasked: true, lastSyncAt: true, lastSyncStatus: true, lastSyncError: true, status: true, createdAt: true }
+        });
+        return res.json({ ...updated, apiToken: updated.apiTokenMasked || null });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
-    return res.json({ id: req.params.id, shopName, status });
+    return res.json({ id: req.params.id, shopName: shopName || undefined, status: status || undefined });
   });
 
   app.delete('/api/store-connections/:id', requireAuth, async (req: any, res) => {
@@ -4099,6 +4145,7 @@ async function startServer() {
 
   app.post('/api/return-orders/:id/restock', requireAuth, async (req: any, res) => {
     const hasDb = await checkDbConnection();
+    const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     if (hasDb) {
       const prisma = getPrisma();
       try {
@@ -4114,7 +4161,7 @@ async function startServer() {
             if (item.qtyReceived <= 0) continue;
             
             let inv = await tx.inventory.findFirst({
-              where: { skuId: item.skuId, warehouseId: 'wh_1' }
+              where: { skuId: item.skuId, warehouseId: effectiveWhId }
             });
 
             if (item.condition === 'RESTOCK' || item.condition === 'GOOD') {
@@ -4127,7 +4174,7 @@ async function startServer() {
               await tx.inventoryTransaction.create({
                 data: {
                   customerId: returnOrder.customerId,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   skuId: item.skuId,
                   skuCode: item.skuCode,
                   type: 'RETURN_RESTOCK',
@@ -4148,7 +4195,7 @@ async function startServer() {
               await tx.inventoryTransaction.create({
                 data: {
                   customerId: returnOrder.customerId,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   skuId: item.skuId,
                   skuCode: item.skuCode,
                   type: 'RETURN_DAMAGED',
@@ -4190,16 +4237,16 @@ async function startServer() {
   // 11. Billing Management (Extended)
   // ==========================================
   app.post('/api/billing-rules', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
-    const { name, code, type, rate } = req.body;
+    const { name, code, type, unit, rate, minCharge, currency, isActive, effectiveFrom, effectiveTo, customerId, warehouseId } = req.body;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const rule = await prisma.billingRule.create({ data: { name, code, type, rate } });
+        const rule = await prisma.billingRule.create({ data: { name, code, type, unit: unit || 'ORDER', rate: rate || 0, minCharge: minCharge || 0, currency: currency || 'USD', isActive: isActive !== undefined ? isActive : true, effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : null, effectiveTo: effectiveTo ? new Date(effectiveTo) : null, customerId: customerId || null, warehouseId: warehouseId || null } });
         return res.status(201).json(rule);
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
-    return res.status(201).json({ id: 'br_' + Date.now(), name, code, type, rate });
+    return res.status(201).json({ id: 'br_' + Date.now(), name, code, type, unit: unit || 'ORDER', rate: rate || 0, minCharge: minCharge || 0, currency: currency || 'USD', isActive: isActive !== undefined ? isActive : true });
   });
 
   app.put('/api/billing-rules/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
@@ -4228,87 +4275,22 @@ async function startServer() {
   });
 
   app.post('/api/billing-records/generate', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
-    const hasDb = await checkDbConnection();
-    const { periodStart, periodEnd } = req.body;
+    const { customerId, warehouseId, periodStart, periodEnd } = req.body;
     if (!periodStart || !periodEnd) {
       return res.status(400).json({ error: 'periodStart and periodEnd are required (ISO date strings)' });
     }
-    const startDate = new Date(periodStart);
-    const endDate = new Date(periodEnd);
-    if (hasDb) {
-      const prisma = getPrisma();
-      try {
-        const rules = await prisma.billingRule.findMany();
-        const customers = await prisma.customer.findMany();
-        const records = [];
-        for (const cust of customers) {
-          for (const rule of rules) {
-            // Check for existing records in this period to prevent duplicates
-            const existing = await prisma.billingRecord.findFirst({
-              where: { customerId: cust.id, type: rule.type, createdAt: { gte: startDate, lte: endDate } }
-            });
-            if (existing) continue;
-
-            // Calculate real quantity based on rule type
-            let quantity = 0;
-            if (rule.type === 'OUTBOUND') {
-              const orderCount = await prisma.outboundOrder.count({
-                where: { customerId: cust.id, createdTime: { gte: startDate, lte: endDate } }
-              });
-              quantity = orderCount;
-            } else if (rule.type === 'STORAGE') {
-              const inventoryCount = await prisma.inventory.count({
-                where: { customerId: cust.id }
-              });
-              quantity = Math.max(inventoryCount, 1);
-            } else if (rule.type === 'INBOUND') {
-              const inboundCount = await prisma.inboundOrder.count({
-                where: { customerId: cust.id, createdAt: { gte: startDate, lte: endDate } }
-              });
-              quantity = Math.max(inboundCount, 1);
-            } else {
-              quantity = 1;
-            }
-            const amount = parseFloat((rule.rate * quantity).toFixed(2));
-            if (amount <= 0) continue;
-            const record = await prisma.billingRecord.create({
-              data: { customerId: cust.id, orderId: null, type: rule.type, amount, currency: 'USD', status: 'UNPAID' }
-            });
-            records.push(record);
-          }
-        }
-        const ws = getWebSocket();
-        records.forEach((r: any) => ws?.emit('billing.generated', { recordId: r.id, customerId: r.customerId, type: r.type, amount: r.amount }, r.customerId));
-        return res.json({ status: 'success', generated: records.length });
-      } catch (err: any) { return res.status(400).json({ error: err.message }); }
-    }
-    return res.json({ status: 'success', generated: 0 });
+    try {
+      const result = await generateBillingRecords({ customerId, warehouseId, periodStart, periodEnd });
+      return res.json(result);
+    } catch (err: any) { return res.status(400).json({ error: err.message }); }
   });
 
   app.post('/api/invoices/generate', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
-    const hasDb = await checkDbConnection();
-    if (hasDb) {
-      const prisma = getPrisma();
-      try {
-        const customers = await prisma.customer.findMany();
-        const invoices = [];
-        for (const cust of customers) {
-          const unpaidRecords = await prisma.billingRecord.findMany({ where: { customerId: cust.id, status: 'UNPAID' } });
-          const totalAmount = unpaidRecords.reduce((sum, r) => sum + r.amount, 0);
-          if (totalAmount > 0) {
-            const invoiceNo = 'INV' + String(Date.now()).substring(3, 12) + cust.id.substring(0, 3);
-            const invoice = await prisma.invoice.create({
-              data: { invoiceNo, customerId: cust.id, amount: totalAmount, status: 'UNPAID' }
-            });
-            invoices.push(invoice);
-          }
-        }
-        const ws = getWebSocket();
-        invoices.forEach((inv: any) => ws?.emit('billing.generated', { invoiceId: inv.id, invoiceNo: inv.invoiceNo, customerId: inv.customerId, amount: inv.amount }, inv.customerId));
-        return res.json({ status: 'success', generated: invoices.length });
-      } catch (err: any) { return res.status(400).json({ error: err.message }); }
-    }
-    return res.json({ status: 'success', generated: 2 });
+    const { customerId, periodStart, periodEnd, dueDate } = req.body;
+    try {
+      const result = await generateInvoices({ customerId, periodStart, periodEnd, dueDate });
+      return res.json(result);
+    } catch (err: any) { return res.status(400).json({ error: err.message }); }
   });
 
   // ==========================================
@@ -4605,6 +4587,7 @@ async function startServer() {
   // Return scrap route
   app.post('/api/return-orders/:id/scrap', requireAuth, async (req: any, res) => {
     const hasDb = await checkDbConnection();
+    const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     if (hasDb) {
       const prisma = getPrisma();
       try {
@@ -4612,10 +4595,10 @@ async function startServer() {
         if (!returnOrder) return res.status(404).json({ error: 'Return order not found' });
         await prisma.$transaction(async (tx) => {
           for (const item of returnOrder.items) {
-            const inv = await tx.inventory.findFirst({ where: { skuId: item.skuId, warehouseId: 'wh_1' } });
+            const inv = await tx.inventory.findFirst({ where: { skuId: item.skuId, warehouseId: effectiveWhId } });
             if (inv) {
               await tx.inventory.update({ where: { id: inv.id }, data: { damagedQty: (inv.damagedQty || 0) + item.qtyReceived } });
-              await tx.inventoryTransaction.create({ data: { customerId: returnOrder.customerId, warehouseId: 'wh_1', skuId: item.skuId, skuCode: item.skuCode, type: 'SCRAP', direction: 'OUT', quantity: item.qtyReceived, beforeQty: inv.availableQty, afterQty: inv.availableQty, reason: `Return ${returnOrder.returnNo} scrapped` } });
+              await tx.inventoryTransaction.create({ data: { customerId: returnOrder.customerId, warehouseId: effectiveWhId, skuId: item.skuId, skuCode: item.skuCode, type: 'SCRAP', direction: 'OUT', quantity: item.qtyReceived, beforeQty: inv.availableQty, afterQty: inv.availableQty, reason: `Return ${returnOrder.returnNo} scrapped` } });
             }
           }
           await tx.returnOrder.update({ where: { id: req.params.id }, data: { status: 'SCRAPPED' } });
@@ -4647,32 +4630,22 @@ async function startServer() {
   });
 
   // Invoice status update with state machine validation
-  app.put('/api/invoices/:id/status', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
-    const { status } = req.body;
-    if (!status || !['UNPAID', 'PAID', 'VOID'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
-    const hasDb = await checkDbConnection();
-    if (hasDb) {
-      const prisma = getPrisma();
-      try {
-        const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
-        if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-        // State machine: UNPAID -> PAID | VOID, PAID -> VOID, VOID -> no transitions
-        const validTransitions: Record<string, string[]> = {
-          UNPAID: ['PAID', 'VOID'],
-          PAID: ['VOID'],
-          VOID: []
-        };
-        const allowed = validTransitions[invoice.status] || [];
-        if (!allowed.includes(status)) {
-          return res.status(400).json({ error: `Cannot transition invoice from ${invoice.status} to ${status}` });
-        }
-        const updated = await prisma.invoice.update({ where: { id: req.params.id }, data: { status } });
-        const ws = getWebSocket();
-        ws?.emit('invoice.statusChanged', { invoiceId: updated.id, invoiceNo: updated.invoiceNo, oldStatus: invoice.status, newStatus: updated.status }, updated.customerId);
-        return res.json(updated);
-      } catch (err: any) { return res.status(400).json({ error: err.message }); }
-    }
-    return res.json({ id: req.params.id, status });
+  app.post('/api/invoices/:id/mark-paid', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const result = await markInvoicePaid(req.params.id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json({ status: 'success' });
+  });
+
+  app.post('/api/invoices/:id/void', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const result = await voidInvoice(req.params.id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json({ status: 'success' });
+  });
+
+  app.post('/api/invoices/:id/recalculate', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const result = await recalculateInvoice(req.params.id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json({ status: 'success' });
   });
 
   // Import history endpoint
@@ -4687,6 +4660,7 @@ async function startServer() {
   app.post('/api/outbound-orders/import', requireAuth, async (req: any, res) => {
     const user = req.user;
     const { rows } = req.body;
+    const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     
     if (!rows || !Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'No rows provided. Upload a CSV/XLSX file or provide rows array.' } });
@@ -4754,7 +4728,7 @@ async function startServer() {
               hasStockIssue = true;
               continue;
             }
-            const inv = await prisma.inventory.findFirst({ where: { skuId: sku.id, warehouseId: 'wh_1' } });
+            const inv = await prisma.inventory.findFirst({ where: { skuId: sku.id, warehouseId: effectiveWhId } });
             if (!inv || inv.availableQty < item.qty) {
               errors.push({ row: 0, message: `Order ${orderNo}: Insufficient stock for SKU '${item.skuCode}' (available: ${inv ? inv.availableQty : 0}, needed: ${item.qty})` });
               hasStockIssue = true;
@@ -4787,7 +4761,7 @@ async function startServer() {
             for (const item of order.items) {
               const sku = await tx.sKU.findFirst({ where: { code: item.skuCode } });
               if (!sku) continue;
-              const inv = await tx.inventory.findFirst({ where: { skuId: sku.id, warehouseId: 'wh_1' } });
+              const inv = await tx.inventory.findFirst({ where: { skuId: sku.id, warehouseId: effectiveWhId } });
               if (!inv) continue;
 
               const orderItem = await tx.outboundOrderItem.create({
@@ -4818,7 +4792,7 @@ async function startServer() {
                   orderItemId: orderItem.id,
                   skuId: sku.id,
                   skuCode: sku.code,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   quantity: item.qty,
                   status: 'ACTIVE',
                 }
@@ -4827,7 +4801,7 @@ async function startServer() {
               await tx.inventoryTransaction.create({
                 data: {
                   customerId,
-                  warehouseId: 'wh_1',
+                  warehouseId: effectiveWhId,
                   skuId: sku.id,
                   skuCode: sku.code,
                   type: 'BULK_IMPORT_RESERVE',
@@ -5017,6 +4991,63 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // ==========================================
+  // 11. System Settings Management
+  // ==========================================
+  app.get('/api/system-settings', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        const settings = await prisma.systemSetting.findMany();
+        const masked = settings.map(s => ({
+          key: s.key,
+          value: s.key.toLowerCase().includes('secret') || s.key.toLowerCase().includes('key') || s.key.toLowerCase().includes('token') || s.key.toLowerCase().includes('password')
+            ? '••••••••'
+            : s.value,
+          updatedAt: s.updatedAt,
+        }));
+        return res.json(masked);
+      } catch (err) { console.error('Prisma system-settings fetch error:', err); }
+    }
+    return res.json([
+      { key: 'wms_name', value: 'NiceC-WMS', updatedAt: new Date().toISOString() },
+      { key: 'timezone', value: 'Asia/Shanghai', updatedAt: new Date().toISOString() },
+      { key: 'currency', value: 'USD', updatedAt: new Date().toISOString() },
+    ]);
+  });
+
+  app.put('/api/system-settings', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
+    const { settings } = req.body;
+    if (!settings || !Array.isArray(settings)) {
+      return res.status(400).json({ error: 'settings array is required' });
+    }
+    const hasDb = await checkDbConnection();
+    if (hasDb) {
+      const prisma = getPrisma();
+      try {
+        for (const s of settings) {
+          await prisma.systemSetting.upsert({
+            where: { key: s.key },
+            update: { value: s.value },
+            create: { key: s.key, value: s.value },
+          });
+        }
+        // Operation log
+        await prisma.operationLog.create({
+          data: {
+            userId: req.user?.id || 'system',
+            username: req.user?.username || 'system',
+            action: 'SYSTEM_SETTINGS_UPDATED',
+            details: `${settings.length} setting(s) updated`,
+          },
+        });
+        return res.json({ status: 'success', updated: settings.length });
+      } catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
+    return res.json({ status: 'success', updated: settings.length });
+  });
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`WMS Express Backend + Vite running on http://localhost:${PORT}`);
