@@ -1,7 +1,7 @@
 # NiceC-WMS Codebase Index
 
-> Last updated: 2026-07-05
-> Branch: `fix/complete-real-production-app`
+> Last updated: 2026-07-06
+> Branch: `fix/complete-wms-functions`
 
 ## Tech Stack
 - **Frontend:** React 19, TypeScript, Vite 6, Tailwind CSS 4, Lucide React, Motion
@@ -312,20 +312,47 @@ Added `requireRole` to sensitive routes:
 - Routes: POST /api/adapters/carrier/ship|rates, /store/sync-*, /storage/allocate|report
 - Integration Center delegates to adapters, no mock logic in pages
 
-### Stage 5 — Warehouse Permission Isolation (Completed)
-- Created `server/modules/warehouse.ts` with:
-  - `buildWarehouseScopedWhere(user)` — builds Prisma `where` with warehouse filter
-  - `assertWarehouseAccess(user, warehouseId)` — throws on mismatch
-  - `requireWarehouseAccess(user, warehouseId)` — returns boolean
-  - `resolveWarehouseId(user, fallback)` — returns user's warehouseId or fallback
-- Created `server/modules/index.ts` — re-exports all module functions
-- Removed all `'wh_1'` hardcoded references from database operations in `server.ts`:
-  - Inbound order create (default from user context)
-  - Outbound order create (reservation + transaction logs)
-  - Outbound order update (restore + recreate reservations)
-  - Return restock (RESTOCK + DAMAGED transactions)
-  - Return scrap (SCRAP transaction)
-  - Wave pick task generation (pickTask.warehouseId)
-  - Bulk import (stock check + reservation + transaction)
-- Remaining `'wh_1'` only in JSON fallback mock data blocks (safe)
-- Build ✅, lint ✅ after changes
+### Production WMS Implementation (Completed)
+All stages verified on `fix/complete-wms-functions` branch, pushed to origin.
+
+**Security & Data Isolation:**
+- API Key/Webhook/StoreConnection: hash stored, raw returned only on creation
+- No keyHash/secretHash/apiTokenHash in list/detail/update responses
+- Client data isolation enforced on all integration endpoints
+- Warehouse permission isolation (buildWarehouseScopedWhere, assertWarehouseAccess, resolveWarehouseId)
+- All `wh_1` hardcoded references removed from database operations (only JSON fallback mock remains)
+
+**Billing Engine (`server/modules/billing.ts`):**
+- calculateBillingAmount with minCharge enforcement
+- resolveBillableSources — unit-specific resolvers (ORDER, ITEM, SKU, CBM, INBOUND_ORDER, etc.)
+- generateBillingRecords with dedup (ruleId+sourceType+sourceId unique)
+- generateInvoices/markInvoicePaid/voidInvoice/recalculateInvoice
+- Invoice status machine: DRAFT→UNPAID→PAID|VOID|OVERDUE
+- OperationLog + WebSocket notifications
+
+**Prisma Production Models:**
+- BillingRule: unit, minCharge, currency, isActive, effectiveFrom/To
+- BillingRecord: ruleId, sourceType, sourceId, quantity, unit, @@unique
+- Invoice: dueDate, paidAt, voidedAt, DRAFT/UNPAID/PAID/VOID/OVERDUE
+- ApiKey: keyHash, keyPrefix, keyLast4, keyMasked (no raw key)
+- WebhookEndpoint: secretHash, secretLast4, secretMasked
+- StoreConnection: apiTokenHash, apiTokenEncrypted, apiTokenLast4, apiTokenMasked, lastSyncAt/Status/Error
+- SystemSetting model
+
+**AI Assistant (`server/ai-assistant.ts` + `server/modules/ai-context.ts`):**
+- Real database summaries instead of hardcoded numbers
+- Role-scoped summaries (admin global, client own data, warehouse own warehouse)
+- Provider: openai:<model>, fallback-db-summary, db-unavailable
+
+**AdminPanel Fixes:**
+- Permissions tab: read-only display (controlled by server/permissions.ts)
+- Billing rules: real save via API
+- System settings: real save via PUT /api/system-settings
+
+**CI/CD (`.github/workflows/ci.yml`):**
+- No more `continue-on-error: true`
+- All steps (typecheck, build, test) must pass for green CI
+
+**Verification:**
+- prisma:validate ✅ | lint ✅ | build ✅ | test:unit (44/44) ✅
+- All pushed to `fix/complete-wms-functions` branch
