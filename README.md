@@ -84,16 +84,26 @@ NiceC WMS 是一个面向海外仓业务的全栈仓库管理系统，采用 **R
 # 1. 安装依赖
 npm install
 cp .env.example .env
-npm run dev
+
+# 2. 启动（默认端口 3100，HMR WebSocket 端口 24679）
+$env:PORT=3100
+$env:WS_PORT=24679
+npm.cmd run dev
 ```
 
 打开：
 
 ```text
-http://localhost:3000
+http://localhost:3100
 ```
 
-默认开发端口：`3000`
+可以通过环境变量自定义端口：
+
+```bash
+$env:PORT=3000       # HTTP 端口（默认 3100）
+$env:WS_PORT=24678   # HMR WebSocket 端口（默认 24679）
+$env:DISABLE_HMR=true  # 禁用 HMR（AI Studio 等无头环境）
+```
 
 ---
 

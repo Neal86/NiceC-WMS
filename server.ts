@@ -27,7 +27,8 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3100);
+const WS_PORT = Number(process.env.WS_PORT || 24679);
 
 async function startServer() {
   const app = express();
@@ -148,7 +149,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
+    const vite = await createViteServer({ server: { middlewareMode: true, hmr: process.env.DISABLE_HMR === 'true' ? false : { port: WS_PORT } }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
