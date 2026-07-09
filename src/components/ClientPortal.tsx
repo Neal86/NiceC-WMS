@@ -1,5 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { HelpCircle, LogOut } from 'lucide-react';
+import {
+  outboundApi,
+  inventoryApi,
+  inboundApi,
+  returnApi,
+  billingApi,
+  apiKeyApi,
+  webhookApi,
+  storeConnectionApi,
+} from '../api';
 
 interface ClientPortalProps {
   currentUser: {
@@ -18,8 +28,133 @@ const sidebarItems = [
   'Billing', 'Invoices', 'API Keys', 'Webhooks', 'Store Connections', 'Support'
 ];
 
+const asArray = <T,>(value: any): T[] => {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.orders)) return value.orders;
+  if (Array.isArray(value?.results)) return value.results;
+  return [];
+};
+
+const belongsToCustomer = (item: any, customerId?: string) => {
+  if (!customerId) return true;
+  return !item?.customerId || item.customerId === customerId;
+};
+
+const isPending = (item: any) => {
+  const status = String(item?.status || item?.state || '').toUpperCase();
+  return ['PENDING', 'NEW', 'CREATED', 'RECEIVING', 'PICKING', 'REVIEW', 'REVIEWS'].includes(status);
+};
+
 export default function ClientPortal({ currentUser, onLogout }: ClientPortalProps) {
   const [activeSidebar, setActiveSidebar] = useState('Dashboard');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [updatedAt, setUpdatedAt] = useState('');
+  const [data, setData] = useState({
+    outbound: [] as any[],
+    inventory: [] as any[],
+    inbound: [] as any[],
+    returns: [] as any[],
+    billingRecords: [] as any[],
+    invoices: [] as any[],
+    apiKeys: [] as any[],
+    webhooks: [] as any[],
+    storeConnections: [] as any[],
+  });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const safe = async (fn: () => Promise<any>) => {
+      try {
+        return await fn();
+      } catch (err) {
+        console.warn('Client portal API failed:', err);
+        return [];
+      }
+    };
+
+    const load = async () => {
+      setLoading(true);
+      setError('');
+
+      const customerId = currentUser.customerId;
+      const params = customerId ? { customerId, pageSize: 200 } : { pageSize: 200 };
+
+      const [
+        outbound,
+        inventory,
+        inbound,
+        returns,
+        billingRecords,
+        invoices,
+        apiKeys,
+        webhooks,
+        storeConnections,
+      ] = await Promise.all([
+        safe(() => outboundApi.getOrders(params as any)),
+        safe(() => inventoryApi.getInventory()),
+        safe(() => inboundApi.getOrders(params)),
+        safe(() => returnApi.getReturns(params)),
+        safe(() => billingApi.getRecords()),
+        safe(() => billingApi.getInvoices()),
+        safe(() => apiKeyApi.getKeys()),
+        safe(() => webhookApi.getWebhooks()),
+        safe(() => storeConnectionApi.getConnections()),
+      ]);
+
+      if (!mounted) return;
+
+      const filterCustomer = (rows: any[]) => rows.filter((row) => belongsToCustomer(row, customerId));
+
+      setData({
+        outbound: filterCustomer(asArray(outbound)),
+        inventory: filterCustomer(asArray(inventory)),
+        inbound: filterCustomer(asArray(inbound)),
+        returns: filterCustomer(asArray(returns)),
+        billingRecords: filterCustomer(asArray(billingRecords)),
+        invoices: filterCustomer(asArray(invoices)),
+        apiKeys: filterCustomer(asArray(apiKeys)),
+        webhooks: filterCustomer(asArray(webhooks)),
+        storeConnections: filterCustomer(asArray(storeConnections)),
+      });
+
+      setUpdatedAt(new Date().toLocaleString());
+      setLoading(false);
+    };
+
+    load().catch((err) => {
+      if (!mounted) return;
+      console.error(err);
+      setError('Failed to load client data.');
+      setLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUser.customerId]);
+
+  const stats = useMemo(() => {
+    const totalStock = data.inventory.reduce((sum, item) => sum + Number(item.availableQty || item.qty || 0), 0);
+    const activeSkus = new Set(data.inventory.map((item) => item.skuId || item.skuCode).filter(Boolean)).size;
+    const balance = data.billingRecords.reduce((sum, item) => sum + Number(item.amount || item.total || 0), 0);
+
+    return {
+      pendingInbound: data.inbound.filter(isPending).length,
+      outboundTotal: data.outbound.length,
+      returnPending: data.returns.filter(isPending).length,
+      inventoryTotal: totalStock,
+      activeSkus,
+      invoices: data.invoices.length,
+      apiKeys: data.apiKeys.length,
+      webhooks: data.webhooks.length,
+      storeConnections: data.storeConnections.length,
+      balance,
+    };
+  }, [data]);
 
   return (
     <div className="min-h-screen w-full bg-slate-100 flex flex-col font-sans">
@@ -77,8 +212,10 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
         <main className="flex-1 overflow-y-auto p-3 space-y-3">
           {/* Update time */}
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">Demo Data</span>
-            <span className="text-slate-400">Updated 2026-07-09 02:15:08 UTC+8</span>
+            <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+              {loading ? 'Loading' : error ? 'Partial Data' : 'Live Data'}
+            </span>
+            <span className="text-slate-400">Updated {updatedAt || '-'}</span>
           </div>
 
           {/* First row: 5 stat cards */}
@@ -86,13 +223,13 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-500 mb-2">Inbound</div>
               <div className="text-xs text-slate-400">Pending Receipt</div>
-              <div className="text-xl font-bold text-slate-800">0</div>
+              <div className="text-xl font-bold text-slate-800">{stats.pendingInbound}</div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-500 mb-1">Outbound</div>
               <div className="flex justify-between text-xs text-slate-400">
                 <span>Drop Ship</span>
-                <span className="text-slate-700 font-semibold">3</span>
+                <span className="text-slate-700 font-semibold">{stats.outboundTotal}</span>
               </div>
               <div className="flex justify-between text-xs text-slate-400 mt-1">
                 <span>Bulk Transfer</span>
@@ -102,7 +239,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-500 mb-2">Returns</div>
               <div className="text-xs text-slate-400">Pending Receipt</div>
-              <div className="text-xl font-bold text-slate-800">904</div>
+              <div className="text-xl font-bold text-slate-800">{stats.returnPending}</div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-500 mb-2">Transfers</div>
@@ -113,7 +250,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
               <div className="text-xs text-slate-500 mb-1">FBA Returns</div>
               <div className="flex justify-between text-xs text-slate-400">
                 <span>Pending Receipt</span>
-                <span className="text-slate-700 font-semibold">1</span>
+                <span className="text-slate-700 font-semibold">{stats.returnPending}</span>
               </div>
               <div className="flex justify-between text-xs text-slate-400 mt-1">
                 <span>Pending Relabel</span>
@@ -143,11 +280,11 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
             <div className="grid grid-cols-3 gap-3 w-[480px] mb-4">
               <div className="border-t-2 border-blue-400 pt-2">
                 <div className="text-xs text-slate-400">Inbound Orders</div>
-                <div className="text-lg font-bold text-slate-800">0</div>
+                <div className="text-lg font-bold text-slate-800">{data.inbound.length}</div>
               </div>
               <div className="border-t-2 border-purple-400 pt-2">
                 <div className="text-xs text-slate-400">Drop Ship Orders</div>
-                <div className="text-lg font-bold text-slate-800">4</div>
+                <div className="text-lg font-bold text-slate-800">{stats.outboundTotal}</div>
               </div>
               <div className="border-t-2 border-green-400 pt-2">
                 <div className="text-xs text-slate-400">Bulk Transfer Orders</div>
@@ -206,11 +343,11 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
               <h4 className="text-sm font-bold text-slate-800 mb-3">Inventory</h4>
               <div className="flex items-baseline gap-2">
                 <span className="text-xs text-slate-400">Total In Stock</span>
-                <span className="text-xl font-bold text-slate-800">204</span>
+                <span className="text-xl font-bold text-slate-800">{stats.inventoryTotal}</span>
               </div>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-xs text-slate-400">Active SKUs</span>
-                <span className="text-base font-bold text-slate-800">2,020</span>
+                <span className="text-base font-bold text-slate-800">{stats.activeSkus}</span>
               </div>
               <div className="mt-3 flex items-center gap-2">
                 <div className="flex-1 h-2 bg-green-100 rounded-full">
@@ -224,7 +361,9 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
               <h4 className="text-sm font-bold text-slate-800 mb-3">Account Balance</h4>
               <div className="inline-block bg-blue-50 text-blue-600 text-xs px-2 py-0.5 rounded mb-2">USD</div>
-              <div className="text-xl font-bold text-red-500">-27,418.69</div>
+              <div className="text-xl font-bold text-red-500">
+                {(stats.balance * -1).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
               <div className="flex items-center gap-1 mt-2 text-xs">
                 <span className="text-slate-400">Credit Limit:</span>
                 <span className="text-slate-700 font-semibold">1,000,000.00</span>

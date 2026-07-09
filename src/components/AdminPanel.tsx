@@ -1,5 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Home, Users, Globe, Package, Truck, Warehouse, Settings, DollarSign, ChevronDown, Info, LogOut, Box, RotateCcw } from 'lucide-react';
+import {
+  userApi,
+  customerApi,
+  warehouseApi,
+  skuApi,
+  productApi,
+  inventoryApi,
+  inboundApi,
+  outboundApi,
+  returnApi,
+  billingApi,
+  apiKeyApi,
+  webhookApi,
+  storeConnectionApi,
+  logApi,
+} from '../api';
 
 interface AdminPanelProps {
   currentUser: any;
@@ -30,8 +46,41 @@ const chartDates = [
 
 const chartValues = [2, 1.8, 1, 1, 1, 1, 1.2, 2, 1.5, 1, 1];
 
+const asArray = <T,>(value: any): T[] => {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.orders)) return value.orders;
+  if (Array.isArray(value?.results)) return value.results;
+  return [];
+};
+
+const isPending = (item: any) => {
+  const status = String(item?.status || item?.state || '').toUpperCase();
+  return ['PENDING', 'NEW', 'CREATED', 'RECEIVING', 'PICKING', 'REVIEW', 'REVIEWS'].includes(status);
+};
+
 export default function AdminPanel({ currentUser, onNavigateBack, onLogout, initialPath = '/admin' }: AdminPanelProps) {
   const [activeSidebar, setActiveSidebar] = useState('Dashboard');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [data, setData] = useState({
+    users: [] as any[],
+    customers: [] as any[],
+    warehouses: [] as any[],
+    skus: [] as any[],
+    products: [] as any[],
+    inventory: [] as any[],
+    inbound: [] as any[],
+    outbound: [] as any[],
+    returns: [] as any[],
+    billingRecords: [] as any[],
+    invoices: [] as any[],
+    apiKeys: [] as any[],
+    webhooks: [] as any[],
+    storeConnections: [] as any[],
+    logs: [] as any[],
+  });
 
   // Access check
   const role = String(currentUser?.role || '').toUpperCase();
@@ -41,13 +90,119 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
         <div className="bg-white p-8 rounded-lg shadow text-center">
           <h2 className="text-xl font-bold text-red-600 mb-2">Access Denied</h2>
           <p className="text-slate-500 mb-4">You do not have permission to access the Admin Panel.</p>
-          <button onClick={onNavigateBack} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-            Go Back
+          <button onClick={onNavigateBack || onLogout} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+            {onNavigateBack ? 'Go Back' : 'Back to Login'}
           </button>
         </div>
       </div>
     );
   }
+
+  useEffect(() => {
+    let mounted = true;
+
+    const safe = async (fn: () => Promise<any>) => {
+      try {
+        return await fn();
+      } catch (err) {
+        console.warn('Admin dashboard API failed:', err);
+        return [];
+      }
+    };
+
+    const load = async () => {
+      setLoading(true);
+      setError('');
+
+      const [
+        users,
+        customers,
+        warehouses,
+        skus,
+        products,
+        inventory,
+        inbound,
+        outbound,
+        returns,
+        billingRecords,
+        invoices,
+        apiKeys,
+        webhooks,
+        storeConnections,
+        logs,
+      ] = await Promise.all([
+        safe(() => userApi.getUsers()),
+        safe(() => customerApi.getCustomers()),
+        safe(() => warehouseApi.getWarehouses()),
+        safe(() => skuApi.getSkus()),
+        safe(() => productApi.getProducts()),
+        safe(() => inventoryApi.getInventory()),
+        safe(() => inboundApi.getOrders({ pageSize: 200 })),
+        safe(() => outboundApi.getOrders({ pageSize: 200 } as any)),
+        safe(() => returnApi.getReturns({ pageSize: 200 })),
+        safe(() => billingApi.getRecords()),
+        safe(() => billingApi.getInvoices()),
+        safe(() => apiKeyApi.getKeys()),
+        safe(() => webhookApi.getWebhooks()),
+        safe(() => storeConnectionApi.getConnections()),
+        safe(() => logApi.getOperationLogs()),
+      ]);
+
+      if (!mounted) return;
+
+      setData({
+        users: asArray(users),
+        customers: asArray(customers),
+        warehouses: asArray(warehouses),
+        skus: asArray(skus),
+        products: asArray(products),
+        inventory: asArray(inventory),
+        inbound: asArray(inbound),
+        outbound: asArray(outbound),
+        returns: asArray(returns),
+        billingRecords: asArray(billingRecords),
+        invoices: asArray(invoices),
+        apiKeys: asArray(apiKeys),
+        webhooks: asArray(webhooks),
+        storeConnections: asArray(storeConnections),
+        logs: asArray(logs),
+      });
+
+      setLoading(false);
+    };
+
+    load().catch((err) => {
+      if (!mounted) return;
+      console.error(err);
+      setError('Failed to load admin data.');
+      setLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    const totalStock = data.inventory.reduce((sum, item) => sum + Number(item.availableQty || item.qty || 0), 0);
+
+    return {
+      pendingInbound: data.inbound.filter(isPending).length,
+      outboundTotal: data.outbound.length,
+      pendingReturns: data.returns.filter(isPending).length,
+      users: data.users.length,
+      customers: data.customers.length,
+      warehouses: data.warehouses.length,
+      skus: data.skus.length,
+      products: data.products.length,
+      totalStock,
+      invoices: data.invoices.length,
+      apiKeys: data.apiKeys.length,
+      webhooks: data.webhooks.length,
+      storeConnections: data.storeConnections.length,
+      logs: data.logs.length,
+    };
+  }, [data]);
 
   const chartPath = chartValues.map((v, i) => {
     const x = 40 + (i * 520) / (chartValues.length - 1);
@@ -113,7 +268,7 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
             <button className="h-8 px-3 bg-white border border-slate-200 rounded text-xs text-slate-600 flex items-center gap-1">
               All Warehouses <ChevronDown className="w-3 h-3" />
             </button>
-            <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">Demo Data</span>
+            <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">{loading ? 'Loading' : error ? 'Partial Data' : 'Live Data'}</span>
           </div>
 
           {/* Stat cards grid */}
@@ -121,17 +276,17 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Inbound</div>
               <div className="text-xs text-slate-400">Pending</div>
-              <div className="text-xl font-bold text-slate-800">13</div>
+              <div className="text-xl font-bold text-slate-800">{stats.pendingInbound}</div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Outbound</div>
-              <div className="flex justify-between text-xs text-slate-400"><span>Drop Ship</span><span className="text-slate-700 font-semibold">97</span></div>
+              <div className="flex justify-between text-xs text-slate-400"><span>Drop Ship</span><span className="text-slate-700 font-semibold">{stats.outboundTotal}</span></div>
               <div className="flex justify-between text-xs text-slate-400 mt-1"><span>Bulk Transfer</span><span className="text-slate-700 font-semibold">0</span></div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Returns</div>
               <div className="text-xs text-slate-400">Pending Receipt</div>
-              <div className="text-xl font-bold text-slate-800">964</div>
+              <div className="text-xl font-bold text-slate-800">{stats.pendingReturns}</div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Transfers</div>
@@ -141,17 +296,17 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Top-Up Reviews</div>
               <div className="text-xs text-slate-400">Pending</div>
-              <div className="text-xl font-bold text-slate-800">0</div>
+              <div className="text-xl font-bold text-slate-800">{stats.invoices}</div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Product Reviews</div>
               <div className="text-xs text-slate-400">Pending</div>
-              <div className="text-xl font-bold text-slate-800">0</div>
+              <div className="text-xl font-bold text-slate-800">{stats.products}</div>
             </div>
             <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
               <div className="text-xs text-slate-400 mb-1">Order Cutoff</div>
               <div className="text-xs text-slate-400">Pending</div>
-              <div className="text-xl font-bold text-slate-800">0</div>
+              <div className="text-xl font-bold text-slate-800">{stats.apiKeys}</div>
             </div>
           </div>
 
@@ -161,7 +316,7 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-slate-800">Volume Analysis</h3>
                 <Info className="w-3.5 h-3.5 text-slate-300" />
-                <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">Demo Data</span>
+                <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">{loading ? 'Loading' : error ? 'Partial Data' : 'Live Data'}</span>
               </div>
               <span className="text-xs text-slate-500">2026-06-08 → 2026-07-07</span>
             </div>
@@ -225,11 +380,11 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
               <h4 className="text-sm font-bold text-slate-800 mb-3">Inventory</h4>
               <div className="flex items-baseline gap-2">
                 <span className="text-xs text-slate-400">Total In Stock</span>
-                <span className="text-xl font-bold text-slate-800">38,700</span>
+                <span className="text-xl font-bold text-slate-800">{stats.totalStock}</span>
               </div>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-xs text-slate-400">Active SKUs</span>
-                <span className="text-base font-bold text-slate-800">1,041</span>
+                <span className="text-base font-bold text-slate-800">{stats.skus}</span>
               </div>
             </div>
 

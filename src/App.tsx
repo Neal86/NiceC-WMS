@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import Login from './components/Login';
 import ClientPortal from './components/ClientPortal';
 import WarehousePortal from './components/WarehousePortal';
@@ -15,18 +15,13 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const navigate = useCallback((path: string) => {
-    setCurrentPath(path);
-    window.history.pushState({}, '', path);
-  }, []);
-
   const handleLoginSuccess = (user: any) => {
     setCurrentUser(user);
     const role = String(user.role || '').toUpperCase();
     const nextPath =
       role === 'CLIENT' ? '/client' :
-      role === 'WAREHOUSE_OPERATOR' || role === 'OPERATOR' ? '/warehouse' :
-      '/';
+      role === 'WAREHOUSE_OPERATOR' || role === 'OPERATOR' || role === 'WAREHOUSE' || role === 'WAREHOUSE_MANAGER' ? '/warehouse' :
+      '/admin';
     setCurrentPath(nextPath);
     window.history.pushState({}, '', nextPath);
   };
