@@ -15,6 +15,7 @@ enum Role {
   ADMIN
   WAREHOUSE_MANAGER
   WAREHOUSE_OPERATOR
+  WAREHOUSE
   CLIENT
 }
 
@@ -34,18 +35,21 @@ enum PrintStatus {
 }
 
 model User {
-  id          String     @id @default(uuid())
-  username    String     @unique
-  email       String     @unique
+  id           String     @id @default(uuid())
+  username     String     @unique
+  email        String     @unique
   passwordHash String     // Hash value
-  role        Role       @default(WAREHOUSE_OPERATOR)
-  avatar      String?
-  customerId  String?
-  customer    Customer?  @relation(fields: [customerId], references: [id])
-  warehouseId String?
-  status      String     @default("ACTIVE")
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  role         Role       @default(WAREHOUSE_OPERATOR)
+  avatar       String?
+  name         String?
+  customerId   String?
+  customer     Customer?  @relation(fields: [customerId], references: [id])
+  warehouseId  String?
+  warehouse    Warehouse? @relation(fields: [warehouseId], references: [id])
+  lastLoginAt  DateTime?
+  status       String     @default("ACTIVE")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   @@index([role])
   @@index([customerId])
@@ -56,8 +60,16 @@ model Warehouse {
   name        String
   code        String      @unique
   address     String
+  city        String?
+  state       String?
+  zip         String?
+  country     String?     @default("US")
+  timezone    String?     @default("America/Los_Angeles")
+  managerName String?
+  status      String      @default("ACTIVE")
   inventories Inventory[]
   locations   Location[]
+  users       User[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -68,6 +80,9 @@ model Customer {
   code         String                 @unique // e.g. Yukon(1108037)
   contact      String?
   email        String?
+  contactName  String?
+  phone        String?
+  status       String                 @default("ACTIVE")
   orders       OutboundOrder[]
   inboundOrders InboundOrder[]
   skus         SKU[]
@@ -102,6 +117,11 @@ model SKU {
   name       String
   barcode    String
   weight     Float               @default(0.0)
+  length     Float               @default(0)
+  width      Float               @default(0)
+  height     Float               @default(0)
+  unit       String              @default("in")
+  status     String              @default("ACTIVE")
   customerId String
   customer   Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
   items      OutboundOrderItem[]
@@ -131,6 +151,16 @@ model OutboundOrder {
   recipient          String
   salesPlatform      String              @default("Amazon")
   orderType          String              @default("单品单件")
+  warehouseId        String?
+  shipToName         String?
+  shipToAddress      String?
+  shipToCity         String?
+  shipToState        String?
+  shipToZip          String?
+  shipToCountry      String?             @default("US")
+  trackingNo         String?
+  carrierName        String?
+  serviceName        String?
   items              OutboundOrderItem[]
   shipment           Shipment?
   createdTime        DateTime            @default(now())
@@ -155,6 +185,12 @@ model OutboundOrderItem {
   qty         Int           @default(1)
   productName String
   category    String        @default("未分类")
+  orderedQty  Int           @default(0)
+  allocatedQty Int          @default(0)
+  pickedQty   Int           @default(0)
+  packedQty   Int           @default(0)
+  shippedQty  Int           @default(0)
+  status      String        @default("OPEN")
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
@@ -241,6 +277,8 @@ model Inventory {
   skuCode      String
   warehouseId  String
   warehouse    Warehouse @relation(fields: [warehouseId], references: [id])
+  locationId   String?
+  onHand       Int       @default(0)
   availableQty Int       @default(0)
   reservedQty  Int       @default(0)
   damagedQty   Int       @default(0)
@@ -320,9 +358,12 @@ model InboundOrder {
   orderNo      String             @unique // ASNXXXXXXXXXX
   customerId   String
   customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  status       String             @default("PENDING") // PENDING, SUBMITTED, RECEIVED, CANCELLED
+  status       String             @default("PENDING") // PENDING, SUBMITTED, RECEIVING, RECEIVED, CANCELLED
   warehouseId  String
   remark       String             @default("-")
+  expectedDate DateTime?
+  referenceNo  String?
+  notes        String?
   items        InboundOrderItem[]
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -340,6 +381,8 @@ model InboundOrderItem {
   skuCode        String
   qtyExpected    Int          @default(0)
   qtyReceived    Int          @default(0)
+  damagedQty     Int          @default(0)
+  status         String       @default("OPEN")
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 }
@@ -393,6 +436,8 @@ model Package {
   height      Float     @default(0.0)
   trackingNo  String?
   labelUrl    String?
+  status      String    @default("OPEN")
+  unit        String    @default("in")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 }
@@ -409,16 +454,21 @@ model ReviewTask {
 }
 
 model ExceptionCase {
-  id          String    @id @default(uuid())
-  caseNo      String    @unique // EXCXXXXXXXXXX
-  orderId     String?
-  customerId  String?
-  type        String    // e.g. DAMAGED_ON_ARRIVAL, ADDRESS_ERROR
-  description String
-  status      String    @default("PENDING") // PENDING, RESOLVED
-  resolution  String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  caseNo        String    @unique // EXCXXXXXXXXXX
+  orderId       String?
+  customerId    String?
+  type          String    // e.g. DAMAGED_ON_ARRIVAL, ADDRESS_ERROR
+  description   String
+  status        String    @default("PENDING") // PENDING, RESOLVED
+  resolution    String?
+  priority      String    @default("MEDIUM")
+  warehouseId   String?
+  relatedType   String?
+  relatedId     String?
+  assignedToId  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 model ReturnOrder {
@@ -521,6 +571,7 @@ model Invoice {
   customerId  String
   amount      Float     @default(0.0)
   status      String    @default("DRAFT") // DRAFT, UNPAID, PAID, VOID, OVERDUE
+  period      String?
   dueDate     DateTime?
   paidAt      DateTime?
   voidedAt    DateTime?
@@ -542,7 +593,10 @@ model ApiKey {
   keyMasked   String?
   scope       String?
   status      String    @default("ACTIVE")
+  maskedKey   String?
+  lastUsedAt  DateTime?
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([customerId])
 }
@@ -556,7 +610,10 @@ model WebhookEndpoint {
   secretMasked  String?
   events        String?
   status        String    @default("ACTIVE")
+  event         String?
+  lastDeliveryAt DateTime?
   createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([customerId])
 }
@@ -583,7 +640,9 @@ model StoreConnection {
   lastSyncStatus    String?
   lastSyncError     String?
   status            String    @default("ACTIVE")
+  configJson        String?
   createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([customerId])
   @@index([platform])
@@ -610,6 +669,10 @@ model OperationLog {
   action      String
   details     String?
   ipAddress   String?
+  role        String?
+  entity      String?
+  entityId    String?
+  result      String?   @default("SUCCESS")
   createdAt   DateTime  @default(now())
 
   @@index([createdAt])
@@ -628,5 +691,22 @@ model AuditLog {
 
   @@index([createdAt])
   @@index([userId])
+}
+
+model SupportTicket {
+  id          String    @id @default(uuid())
+  ticketNo    String    @unique
+  customerId  String
+  subject     String
+  category    String?
+  priority    String    @default("MEDIUM")
+  status      String    @default("OPEN")
+  message     String
+  lastReplyAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([status])
 }
 
