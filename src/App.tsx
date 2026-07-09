@@ -56,38 +56,11 @@ export default function App() {
   }
 
   // Admin / Manager role
-  if (currentPath.startsWith('/admin')) {
-    return (
-      <AdminPanel
-        currentUser={currentUser}
-        initialPath={currentPath}
-        onNavigateBack={() => navigate('/')}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
-  // Default Admin workspace
   return (
-    <div className="min-h-screen w-full bg-slate-100 flex flex-col font-sans">
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center p-8">
-          <h2 className="text-xl font-bold text-slate-800 mb-2">Welcome, {currentUser.email || currentUser.username}</h2>
-          <p className="text-sm text-slate-500 mb-4">Role: {role}</p>
-          <button
-            onClick={() => navigate('/admin')}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 mr-2"
-          >
-            Admin Panel
-          </button>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-          >
-            Logout
-          </button>
-        </div>
-      </div>
-    </div>
+    <AdminPanel
+      currentUser={currentUser}
+      initialPath={currentPath}
+      onLogout={handleLogout}
+    />
   );
 }
