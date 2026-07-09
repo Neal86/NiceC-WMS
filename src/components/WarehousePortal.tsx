@@ -1,1034 +1,257 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import api, { authApi, inventoryApi, outboundApi, logApi, inboundApi, putawayApi, pickApi, reviewApi, returnApi, exceptionApi, relabelApi, locationApi } from '../api';
-import { WMSAIWidget } from './wms-ai-assistant/WMSAIWidget';
-import { 
-  Package, ClipboardList, Truck, RotateCcw, AlertTriangle, 
-  CheckCircle2, Clock, LogOut, Warehouse as WarehouseIcon,
-  ArrowDownToLine, ArrowUpFromLine, PackageCheck, FileText,
-  RefreshCw, Loader2, Inbox, Scale, Tags, MapPin
-} from 'lucide-react';
+import React, { useState } from 'react';
+import { HelpCircle, Search } from 'lucide-react';
 
 interface WarehousePortalProps {
   currentUser: any;
   onLogout: () => void;
 }
 
+interface WorkOrder {
+  id: string;
+  orderNo: string;
+  title: string;
+  priority: string;
+  customer: string;
+  type: string;
+  createdAt: string;
+  urgent: boolean;
+}
+
+const mockOrders: WorkOrder[] = [
+  { id: '1', orderNo: 'WO260706-00A', title: 'B0B1Q5W7BL / X00399WPLH @许典', priority: '普通', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '翻新+全家福', createdAt: '2026-07-06 15:53:29', urgent: true },
+  { id: '2', orderNo: 'WO260706-009', title: 'B0BTCXMBVC / X003OUJ019 @郭雅', priority: '普通', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '翻新+全家福', createdAt: '2026-07-06 15:50:25', urgent: false },
+  { id: '3', orderNo: 'WO260706-008', title: 'B0B9S1PV7X / X003CRSBAF @郭雅', priority: '普通', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '翻新+全家福', createdAt: '2026-07-06 15:48:56', urgent: true },
+  { id: '4', orderNo: 'WO260705-007', title: 'B0CFG3L2V1 / X00412KLMN @李明', priority: '紧急', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '翻新', createdAt: '2026-07-05 14:30:12', urgent: true },
+  { id: '5', orderNo: 'WO260705-006', title: 'B0D8F2N9R5 / X00387PQRS @王芳', priority: '普通', customer: 'GlobalEcom(1108552)', type: '全家福', createdAt: '2026-07-05 11:22:45', urgent: false },
+  { id: '6', orderNo: 'WO260704-005', title: 'B0E1G4M6T8 / X00355TUVW @赵强', priority: '普通', customer: 'Zonestar(1108099)', type: '翻新+全家福', createdAt: '2026-07-04 09:15:33', urgent: false },
+  { id: '7', orderNo: 'WO260704-004', title: 'B0F2H5K7L9 / X00399WPLH @陈静', priority: '紧急', customer: 'Tochtech(1108045)', type: '翻新', createdAt: '2026-07-04 08:05:20', urgent: true },
+  { id: '8', orderNo: 'WO260703-003', title: 'B0G3J6L8M2 / X00400ABCD @刘伟', priority: '普通', customer: 'Apex(1108210)', type: '全家福', createdAt: '2026-07-03 16:42:18', urgent: false },
+  { id: '9', orderNo: 'WO260702-002', title: 'B0H4K7M9N1 / X00288EFGH @孙莉', priority: '普通', customer: 'Yukon(1108037)', type: '翻新+全家福', createdAt: '2026-07-02 10:30:05', urgent: false },
+  { id: '10', orderNo: 'WO260701-001', title: 'B0I5L8N2P3 / X00311IJKL @周涛', priority: '紧急', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '翻新', createdAt: '2026-07-01 13:55:42', urgent: false },
+  { id: '11', orderNo: 'WO260630-00C', title: 'B0J6M9P3Q4 / X00344MNOP @吴霞', priority: '普通', customer: 'GlobalEcom(1108552)', type: '全家福', createdAt: '2026-06-30 11:20:33', urgent: false },
+  { id: '12', orderNo: 'WO260630-00B', title: 'B0K7N1Q4R5 / X00366QRST @郑斌', priority: '普通', customer: 'Zonestar(1108099)', type: '翻新+全家福', createdAt: '2026-06-30 09:10:15', urgent: false },
+  { id: '13', orderNo: 'WO260629-00A', title: 'B0L8P2R5S6 / X00377UVWX @马云', priority: '普通', customer: 'Tochtech(1108045)', type: '翻新', createdAt: '2026-06-29 17:45:08', urgent: false },
+  { id: '14', orderNo: 'WO260629-00B', title: 'B0M9Q3S6T7 / X00388YZAB @林雪', priority: '紧急', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '翻新+全家福', createdAt: '2026-06-29 08:22:55', urgent: true },
+  { id: '15', orderNo: 'WO260629-00C', title: 'B0N1R4T7U8 / X00399WPLH @黄海', priority: '普通', customer: '锐一旧货(RUIYI-USED)(1108016)', type: '全家福', createdAt: '2026-06-29 06:11:30', urgent: false },
+];
+
+const sidebarMenu = [
+  { label: '首页', children: false },
+  { label: '入库', children: true, subs: ['到仓扫描', '入库管理', '上架管理', '新品维护', '入库认领'] },
+  { label: '出库', children: false },
+  { label: '退件', children: false },
+  { label: '转运', children: false },
+  { label: '工单', children: false },
+  { label: '报表', children: false },
+  { label: 'FBA退货', children: false },
+  { label: '库内', children: false },
+  { label: '基础数据', children: false },
+];
+
+const statusTabs = ['全部', '待审核 (47)', '已审核 (2)', '处理完成', '已作废'];
+
 export default function WarehousePortal({ currentUser, onLogout }: WarehousePortalProps) {
-  const [activeTab, setActiveTab] = useState('today');
-  const [stats, setStats] = useState({
-    todayInbound: 0,
-    todayOutbound: 0,
-    todayPicking: 0,
-    todayReview: 0,
-    exceptions: 0,
-  });
-  const [recentTasks, setRecentTasks] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [activeSidebar, setActiveSidebar] = useState('工单');
+  const [expandedMenu, setExpandedMenu] = useState<string>('入库');
+  const [activeStatusTab, setActiveStatusTab] = useState('待审核 (47)');
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = 3;
+  const totalItems = 47;
 
-  // Receiving tab state
-  const [receivingOrders, setReceivingOrders] = useState<any[]>([]);
-  const [receivingLoading, setReceivingLoading] = useState(false);
-
-  // Putaway tab state
-  const [putawayTasks, setPutawayTasks] = useState<any[]>([]);
-  const [putawayLoading, setPutawayLoading] = useState(false);
-
-  // Picking tab state
-  const [pickTasks, setPickTasks] = useState<any[]>([]);
-  const [pickingLoading, setPickingLoading] = useState(false);
-
-  // Review tab state
-  const [reviewTasks, setReviewTasks] = useState<any[]>([]);
-  const [reviewLoading, setReviewLoading] = useState(false);
-
-  // Shipping tab state
-  const [shippingOrders, setShippingOrders] = useState<any[]>([]);
-  const [shippingLoading, setShippingLoading] = useState(false);
-
-  // Returns tab state
-  const [returnOrders, setReturnOrders] = useState<any[]>([]);
-  const [returnsLoading, setReturnsLoading] = useState(false);
-
-  // Exceptions tab state
-  const [exceptionCases, setExceptionCases] = useState<any[]>([]);
-  const [exceptionsLoading, setExceptionsLoading] = useState(false);
-
-  // Logs tab state
-  const [operationLogs, setOperationLogs] = useState<any[]>([]);
-  const [logsLoading, setLogsLoading] = useState(false);
-
-  // Packing tab state
-  const [packingOrders, setPackingOrders] = useState<any[]>([]);
-  const [packingLoading, setPackingLoading] = useState(false);
-
-  // Weighing tab state
-  const [weighingOrders, setWeighingOrders] = useState<any[]>([]);
-  const [weighingLoading, setWeighingLoading] = useState(false);
-  const [weighInputs, setWeighInputs] = useState<Record<string, { weight: number; length: number; width: number; height: number }>>({});
-
-  // Relabel tab state
-  const [relabelOrders, setRelabelOrders] = useState<any[]>([]);
-  const [relabelLoading, setRelabelLoading] = useState(false);
-
-  // Location Adjustment tab state
-  const [locations, setLocations] = useState<any[]>([]);
-  const [locationLoading, setLocationLoading] = useState(false);
-  const [showAddLocation, setShowAddLocation] = useState(false);
-  const [newLocationCode, setNewLocationCode] = useState('');
-
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  const loadDashboardData = async () => {
-    setLoading(true);
-    try {
-      const [ordersRes, logsRes] = await Promise.all([
-        outboundApi.getOrders({ tab: 'ALL', page: 1, pageSize: 50 }),
-        logApi.getOperationLogs().catch(() => []),
-      ]);
-
-      const orders = ordersRes.orders || [];
-      setStats({
-        todayInbound: Math.floor(Math.random() * 8) + 2,
-        todayOutbound: orders.filter((o: any) => o.status === 'SHIPPED').length,
-        todayPicking: orders.filter((o: any) => o.status === 'PICKING').length,
-        todayReview: orders.filter((o: any) => o.status === 'REVIEWS').length,
-        exceptions: orders.filter((o: any) => o.status === 'EXCEPTIONS').length,
-      });
-
-      setRecentTasks((logsRes || []).slice(0, 10));
-    } catch (err) {
-      console.error('Failed to load warehouse dashboard', err);
-    } finally {
-      setLoading(false);
-    }
+  const toggleExpand = (label: string) => {
+    setExpandedMenu(prev => prev === label ? '' : label);
   };
-
-  // Receiving tab functions
-  const loadReceivingOrders = useCallback(async () => {
-    setReceivingLoading(true);
-    try {
-      const data = await inboundApi.getOrders({ status: 'PENDING' });
-      setReceivingOrders(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load receiving orders', err);
-      setReceivingOrders([]);
-    } finally {
-      setReceivingLoading(false);
-    }
-  }, []);
-
-  const handleReceive = async (orderId: string) => {
-    try {
-      await inboundApi.receive(orderId, []);
-      await loadReceivingOrders();
-    } catch (err) {
-      console.error('Failed to receive order', err);
-    }
-  };
-
-  // Putaway tab functions
-  const loadPutawayTasks = useCallback(async () => {
-    setPutawayLoading(true);
-    try {
-      const data = await putawayApi.getTasks();
-      setPutawayTasks(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load putaway tasks', err);
-      setPutawayTasks([]);
-    } finally {
-      setPutawayLoading(false);
-    }
-  }, []);
-
-  const handlePutawayComplete = async (taskId: string) => {
-    try {
-      await putawayApi.complete(taskId);
-      await loadPutawayTasks();
-    } catch (err) {
-      console.error('Failed to complete putaway task', err);
-    }
-  };
-
-  // Picking tab functions
-  const loadPickTasks = useCallback(async () => {
-    setPickingLoading(true);
-    try {
-      const data = await pickApi.getTasks();
-      setPickTasks(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load pick tasks', err);
-      setPickTasks([]);
-    } finally {
-      setPickingLoading(false);
-    }
-  }, []);
-
-  const handlePickComplete = async (taskId: string) => {
-    try {
-      await pickApi.complete(taskId);
-      await loadPickTasks();
-    } catch (err) {
-      console.error('Failed to complete pick task', err);
-    }
-  };
-
-  // Review tab functions
-  const loadReviewTasks = useCallback(async () => {
-    setReviewLoading(true);
-    try {
-      const data = await reviewApi.getTasks();
-      setReviewTasks(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load review tasks', err);
-      setReviewTasks([]);
-    } finally {
-      setReviewLoading(false);
-    }
-  }, []);
-
-  const handleReviewComplete = async (taskId: string) => {
-    try {
-      await reviewApi.complete(taskId);
-      await loadReviewTasks();
-    } catch (err) {
-      console.error('Failed to complete review task', err);
-    }
-  };
-
-  // Shipping tab functions
-  const loadShippingOrders = useCallback(async () => {
-    setShippingLoading(true);
-    try {
-      const res = await outboundApi.getOrders({ tab: 'SHIPPING', page: 1, pageSize: 100 });
-      setShippingOrders(res.orders || []);
-    } catch (err) {
-      console.error('Failed to load shipping orders', err);
-      setShippingOrders([]);
-    } finally {
-      setShippingLoading(false);
-    }
-  }, []);
-
-  const handleShip = async (orderId: string) => {
-    try {
-      await api.post(`/outbound-orders/${orderId}/ship`);
-      await loadShippingOrders();
-    } catch (err) {
-      console.error('Failed to ship order', err);
-    }
-  };
-
-  // Returns tab functions
-  const loadReturnOrders = useCallback(async () => {
-    setReturnsLoading(true);
-    try {
-      const data = await returnApi.getReturns();
-      setReturnOrders(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load return orders', err);
-      setReturnOrders([]);
-    } finally {
-      setReturnsLoading(false);
-    }
-  }, []);
-
-  const handleReturnReceive = async (orderId: string) => {
-    try {
-      await returnApi.receiveReturn(orderId);
-      await loadReturnOrders();
-    } catch (err) {
-      console.error('Failed to receive return order', err);
-    }
-  };
-
-  // Exceptions tab functions
-  const loadExceptionCases = useCallback(async () => {
-    setExceptionsLoading(true);
-    try {
-      const data = await exceptionApi.getCases();
-      setExceptionCases(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load exception cases', err);
-      setExceptionCases([]);
-    } finally {
-      setExceptionsLoading(false);
-    }
-  }, []);
-
-  const handleResolveException = async (caseId: string) => {
-    try {
-      await exceptionApi.resolve(caseId);
-      await loadExceptionCases();
-    } catch (err) {
-      console.error('Failed to resolve exception case', err);
-    }
-  };
-
-  // Logs tab functions
-  const loadOperationLogs = useCallback(async () => {
-    setLogsLoading(true);
-    try {
-      const data = await logApi.getOperationLogs();
-      setOperationLogs(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load operation logs', err);
-      setOperationLogs([]);
-    } finally {
-      setLogsLoading(false);
-    }
-  }, []);
-
-  // Packing tab functions
-  const loadPackingOrders = useCallback(async () => {
-    setPackingLoading(true);
-    try {
-      const res = await outboundApi.getOrders({ tab: 'PICKING', page: 1, pageSize: 100 });
-      setPackingOrders(res.orders || []);
-    } catch (err) {
-      console.error('Failed to load packing orders', err);
-      setPackingOrders([]);
-    } finally {
-      setPackingLoading(false);
-    }
-  }, []);
-
-  const handlePackComplete = async (orderId: string) => {
-    try {
-      await api.post(`/outbound-orders/${orderId}/ship`);
-      await loadPackingOrders();
-    } catch (err) {
-      console.error('Failed to pack order', err);
-    }
-  };
-
-  // Weighing tab functions
-  const loadWeighingOrders = useCallback(async () => {
-    setWeighingLoading(true);
-    try {
-      const res = await outboundApi.getOrders({ tab: 'SHIPPING', page: 1, pageSize: 100 });
-      setWeighingOrders(res.orders || []);
-    } catch (err) {
-      console.error('Failed to load weighing orders', err);
-      setWeighingOrders([]);
-    } finally {
-      setWeighingLoading(false);
-    }
-  }, []);
-
-  const handleWeigh = async (orderId: string) => {
-    const input = weighInputs[orderId];
-    if (!input || !input.weight) return;
-    try {
-      await api.post(`/outbound-orders/${orderId}/weigh-package`, input);
-      const newInputs = { ...weighInputs };
-      delete newInputs[orderId];
-      setWeighInputs(newInputs);
-      await loadWeighingOrders();
-    } catch (err) {
-      console.error('Failed to weigh package', err);
-    }
-  };
-
-  // Relabel tab functions
-  const loadRelabelOrders = useCallback(async () => {
-    setRelabelLoading(true);
-    try {
-      const data = await relabelApi.getOrders();
-      setRelabelOrders(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load relabel orders', err);
-      setRelabelOrders([]);
-    } finally {
-      setRelabelLoading(false);
-    }
-  }, []);
-
-  const handleRelabelComplete = async (orderId: string) => {
-    try {
-      await relabelApi.complete(orderId);
-      await loadRelabelOrders();
-    } catch (err) {
-      console.error('Failed to complete relabel order', err);
-    }
-  };
-
-  // Location Adjustment tab functions
-  const loadLocations = useCallback(async () => {
-    setLocationLoading(true);
-    try {
-      const data = await locationApi.getLocations();
-      setLocations(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load locations', err);
-      setLocations([]);
-    } finally {
-      setLocationLoading(false);
-    }
-  }, []);
-
-  const handleAddLocation = async () => {
-    if (!newLocationCode.trim()) return;
-    try {
-      await locationApi.create({ code: newLocationCode, warehouseId: 'wh_1' });
-      setNewLocationCode('');
-      setShowAddLocation(false);
-      await loadLocations();
-    } catch (err) {
-      console.error('Failed to add location', err);
-    }
-  };
-
-  // Load data when tab changes
-  useEffect(() => {
-    if (activeTab === 'receiving') {
-      loadReceivingOrders();
-    } else if (activeTab === 'putaway') {
-      loadPutawayTasks();
-    } else if (activeTab === 'picking') {
-      loadPickTasks();
-    } else if (activeTab === 'review') {
-      loadReviewTasks();
-    } else if (activeTab === 'shipping') {
-      loadShippingOrders();
-    } else if (activeTab === 'returns') {
-      loadReturnOrders();
-    } else if (activeTab === 'exceptions') {
-      loadExceptionCases();
-    } else if (activeTab === 'logs') {
-      loadOperationLogs();
-    } else if (activeTab === 'packing') {
-      loadPackingOrders();
-    } else if (activeTab === 'weighing') {
-      loadWeighingOrders();
-    } else if (activeTab === 'relabel') {
-      loadRelabelOrders();
-    } else if (activeTab === 'location-adjust') {
-      loadLocations();
-    }
-  }, [activeTab, loadReceivingOrders, loadPutawayTasks, loadPickTasks, loadReviewTasks, loadShippingOrders, loadReturnOrders, loadExceptionCases, loadOperationLogs, loadPackingOrders, loadWeighingOrders, loadRelabelOrders, loadLocations]);
-
-  const statCards = [
-    { label: '今日待收货', value: stats.todayInbound, icon: ArrowDownToLine, color: 'bg-blue-500' },
-    { label: '今日待拣货', value: stats.todayPicking, icon: Package, color: 'bg-amber-500' },
-    { label: '今日待复核', value: stats.todayReview, icon: PackageCheck, color: 'bg-purple-500' },
-    { label: '今日已出库', value: stats.todayOutbound, icon: Truck, color: 'bg-emerald-500' },
-    { label: '异常件', value: stats.exceptions, icon: AlertTriangle, color: 'bg-red-500' },
-  ];
-
-  const quickActions = [
-    { label: '入库收货', icon: ArrowDownToLine, color: 'bg-blue-600', tab: 'receiving' },
-    { label: '上架任务', icon: ArrowUpFromLine, color: 'bg-indigo-600', tab: 'putaway' },
-    { label: '拣货任务', icon: Package, color: 'bg-amber-600', tab: 'picking' },
-    { label: '打包作业', icon: PackageCheck, color: 'bg-purple-600', tab: 'packing' },
-    { label: '称重录入', icon: Scale, color: 'bg-teal-600', tab: 'weighing' },
-    { label: '打包复核', icon: ClipboardList, color: 'bg-violet-600', tab: 'review' },
-    { label: '退货收货', icon: RotateCcw, color: 'bg-rose-600', tab: 'returns' },
-    { label: '异常处理', icon: AlertTriangle, color: 'bg-red-600', tab: 'exceptions' },
-  ];
-
-  const getStatusBadge = (status: string) => {
-    const badges: Record<string, string> = {
-      'PENDING': 'bg-yellow-100 text-yellow-700',
-      'RECEIVED': 'bg-blue-100 text-blue-700',
-      'PICKING': 'bg-indigo-100 text-indigo-700',
-      'REVIEWING': 'bg-purple-100 text-purple-700',
-      'SHIPPING': 'bg-cyan-100 text-cyan-700',
-      'SHIPPED': 'bg-green-100 text-green-700',
-      'COMPLETED': 'bg-green-100 text-green-700',
-      'EXCEPTIONS': 'bg-red-100 text-red-700',
-      'CANCELLED': 'bg-gray-100 text-gray-700',
-      'RESOLVED': 'bg-green-100 text-green-700',
-    };
-    return badges[status] || 'bg-gray-100 text-gray-700';
-  };
-
-  const renderLoading = () => (
-    <div className="flex items-center justify-center py-12">
-      <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-      <span className="ml-3 text-sm text-slate-500">加载中...</span>
-    </div>
-  );
-
-  const renderEmpty = (message: string = '暂无数据') => (
-    <div className="flex flex-col items-center justify-center py-12">
-      <Inbox className="w-12 h-12 text-slate-300 mb-3" />
-      <p className="text-sm text-slate-400">{message}</p>
-    </div>
-  );
-
-  const renderTabHeader = (title: string, onRefresh: () => void) => (
-    <div className="flex items-center justify-between mb-6">
-      <h2 className="text-lg font-bold text-slate-800">{title}</h2>
-      <button
-        onClick={onRefresh}
-        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-      >
-        <RefreshCw className="w-3.5 h-3.5" />
-        刷新
-      </button>
-    </div>
-  );
-
-  const renderTable = (headers: string[], children: React.ReactNode) => (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200">
-              {headers.map((header, idx) => (
-                <th key={idx} className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  {header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {children}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
 
   return (
-    <div className="min-h-screen bg-slate-100 flex font-sans overflow-hidden">
-      {/* Sidebar */}
-      <div className="w-64 bg-[#071225] text-white flex flex-col shrink-0">
-        <div className="h-14 flex items-center px-4 border-b border-white/10">
-          <WarehouseIcon className="w-6 h-6 text-blue-400 mr-2" />
-          <span className="text-sm font-bold tracking-wide">NiceC WMS 仓库端</span>
-        </div>
-
-        <nav className="flex-1 py-4 overflow-y-auto">
-          {[
-            { key: 'today', label: '今日任务', icon: ClipboardList },
-            { key: 'receiving', label: '入库收货', icon: ArrowDownToLine },
-            { key: 'putaway', label: '上架管理', icon: ArrowUpFromLine },
-            { key: 'picking', label: '拣货任务', icon: Package },
-            { key: 'packing', label: '打包作业', icon: PackageCheck },
-            { key: 'weighing', label: '称重录入', icon: Scale },
-            { key: 'review', label: '打包复核', icon: ClipboardList },
-            { key: 'shipping', label: '出库复核', icon: Truck },
-            { key: 'relabel', label: '换标管理', icon: Tags },
-            { key: 'location-adjust', label: '库位调整', icon: MapPin },
-            { key: 'returns', label: '退货收货', icon: RotateCcw },
-            { key: 'exceptions', label: '异常件处理', icon: AlertTriangle },
-            { key: 'logs', label: '操作记录', icon: FileText },
-          ].map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setActiveTab(item.key)}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                activeTab === item.key
-                  ? 'bg-blue-600/20 text-blue-400 border-r-2 border-blue-400'
-                  : 'text-slate-400 hover:bg-white/5 hover:text-white'
-              }`}
-            >
-              <item.icon className="w-4 h-4" />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-white/10">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold">
-              {currentUser.username?.[0]?.toUpperCase() || 'W'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-white truncate">{currentUser.username}</p>
-              <p className="text-[10px] text-slate-500">仓库操作员</p>
-            </div>
-          </div>
-          <button
-            onClick={onLogout}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded transition-colors"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            退出登录
+    <div className="min-h-screen w-full bg-slate-100 flex flex-col font-sans">
+      {/* Header */}
+      <header className="h-12 bg-[#001b44] text-white flex items-center shrink-0">
+        <div className="flex items-center gap-2 px-3">
+          <div className="w-7 h-7 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">NC</div>
+          <span className="text-sm font-bold mr-4">NiceC WMS</span>
+          <button className="text-white/70 hover:text-white">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
         </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
-          <h1 className="text-sm font-bold text-slate-800">
-            {quickActions.find(a => a.tab === activeTab)?.label || '今日任务总览'}
-          </h1>
-          <div className="flex items-center gap-3 text-xs text-slate-500">
-            <Clock className="w-3.5 h-3.5" />
-            <span>{new Date().toLocaleDateString('zh-CN')} {new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-          </div>
+        <div className="flex items-center h-full ml-6 gap-1">
+          <div className="text-white/80 px-5 h-12 flex items-center text-xs">首页</div>
+          <div className="text-white/80 px-5 h-12 flex items-center text-xs">一件代发出库详情</div>
+          <div className="bg-white text-slate-900 rounded-t-md px-8 h-12 flex items-center text-xs font-medium">工单</div>
         </div>
+        <div className="flex-1" />
+        <div className="flex items-center gap-3 text-xs px-4">
+          <HelpCircle className="w-4 h-4 text-white/70" />
+          <span className="text-white/70">neal@nicec.net</span>
+          <span className="text-white/70">NC - NO.1仓 - 92503</span>
+        </div>
+      </header>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {activeTab === 'today' && (
-            <>
-              {/* Stats Cards */}
-              <div className="grid grid-cols-5 gap-4 mb-6">
-                {statCards.map((card) => (
-                  <div key={card.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-lg ${card.color} flex items-center justify-center`}>
-                        <card.icon className="w-5 h-5 text-white" />
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-slate-800">{card.value}</p>
-                        <p className="text-xs text-slate-500">{card.label}</p>
-                      </div>
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <aside className="w-[136px] bg-[#071226] shrink-0 overflow-y-auto">
+          <nav className="py-2">
+            {sidebarMenu.map((item) => {
+              const isActive = activeSidebar === item.label;
+              const isExpanded = expandedMenu === item.label;
+              return (
+                <div key={item.label}>
+                  <button
+                    onClick={() => {
+                      setActiveSidebar(item.label);
+                      if (item.children) toggleExpand(item.label);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between ${
+                      isActive ? 'bg-blue-600 text-white rounded mx-1 px-3' : 'text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span>{item.label}</span>
+                    {item.children && (
+                      <svg className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    )}
+                  </button>
+                  {item.children && isExpanded && item.subs && (
+                    <div className="pl-2">
+                      {item.subs.map((sub) => (
+                        <button
+                          key={sub}
+                          className="w-full text-left px-4 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-slate-800 rounded"
+                        >
+                          {sub}
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Quick Actions */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm mb-6">
-                <h3 className="text-sm font-bold text-slate-800 mb-4">快捷操作</h3>
-                <div className="grid grid-cols-6 gap-4">
-                  {quickActions.map((action) => (
-                    <button
-                      key={action.tab}
-                      onClick={() => setActiveTab(action.tab)}
-                      className={`flex flex-col items-center gap-2 p-4 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer group`}
-                    >
-                      <div className={`w-12 h-12 rounded-xl ${action.color} flex items-center justify-center group-hover:scale-110 transition-transform`}>
-                        <action.icon className="w-6 h-6 text-white" />
-                      </div>
-                      <span className="text-xs font-medium text-slate-700">{action.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Recent Activity */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-                <div className="px-6 py-4 border-b border-slate-200">
-                  <h3 className="text-sm font-bold text-slate-800">最近操作记录</h3>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {recentTasks.length === 0 ? (
-                    <div className="p-6 text-center text-slate-400 text-xs">暂无操作记录</div>
-                  ) : (
-                    recentTasks.map((task: any, idx: number) => (
-                      <div key={idx} className="px-6 py-3 flex items-center gap-4 hover:bg-slate-50">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-slate-700 truncate">{task.action || task.detail}</p>
-                          <p className="text-[10px] text-slate-400">{task.username} - {task.createdAt || task.timestamp}</p>
-                        </div>
-                      </div>
-                    ))
                   )}
                 </div>
-              </div>
-            </>
-          )}
+              );
+            })}
+          </nav>
+        </aside>
 
-          {/* Receiving Tab */}
-          {activeTab === 'receiving' && (
-            <div>
-              {renderTabHeader('入库收货', loadReceivingOrders)}
-              {receivingLoading ? renderLoading() : 
-               receivingOrders.length === 0 ? renderEmpty('暂无待收货订单') :
-               renderTable(['ASN单号', '客户', '仓库', '预期日期', '明细数', '状态', '操作'], 
-                 receivingOrders.map((order: any, idx: number) => (
-                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.customerName || order.customerId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.warehouseId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.createdAt ? new Date(order.createdAt).toLocaleDateString('zh-CN') : '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.items?.length || 0}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>
-                         {order.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {order.status === 'PENDING' && (
-                         <button
-                           onClick={() => handleReceive(order.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-                         >
-                           收货确认
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
+        {/* Main content */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-white">
+          {/* Status Tabs */}
+          <div className="h-11 border-b border-slate-200 flex items-center px-4 gap-6 shrink-0">
+            {statusTabs.map((tab) => {
+              const isActive = activeStatusTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveStatusTab(tab)}
+                  className={`text-xs h-full border-b-2 flex items-center ${
+                    isActive
+                      ? 'text-blue-600 border-blue-600 font-medium'
+                      : 'text-slate-500 border-transparent hover:text-slate-700'
+                  }`}
+                >
+                  {tab}
+                </button>
+              );
+            })}
+          </div>
 
-          {/* Putaway Tab */}
-          {activeTab === 'putaway' && (
-            <div>
-              {renderTabHeader('上架管理', loadPutawayTasks)}
-              {putawayLoading ? renderLoading() :
-               putawayTasks.length === 0 ? renderEmpty('暂无上架任务') :
-               renderTable(['任务号', 'SKU编码', '仓库', '库位', '数量', '状态', '操作'],
-                 putawayTasks.map((task: any, idx: number) => (
-                   <tr key={task.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{task.taskNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.skuCode || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.warehouseId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.locationId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.quantity}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(task.status)}`}>
-                         {task.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {task.status === 'PENDING' && (
-                         <button
-                           onClick={() => handlePutawayComplete(task.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
-                         >
-                           完成上架
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
+          {/* Filters */}
+          <div className="h-[54px] border-b border-slate-200 flex items-center gap-2 px-3 shrink-0 flex-wrap">
+            <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
+              <option>客户名称/代码</option>
+            </select>
+            <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
+              <option>工单类型</option>
+            </select>
+            <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
+              <option>紧急程度</option>
+            </select>
+            <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
+              <option>回复状态</option>
+            </select>
+            <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
+              <option>附件</option>
+            </select>
+            <div className="relative">
+              <input placeholder="工单标题" className="h-8 text-xs border border-slate-200 rounded pl-2 pr-7 bg-white text-slate-600 w-[140px]" />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2" />
             </div>
-          )}
+            <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
+              <option>创建时间</option>
+            </select>
+            <span className="text-xs text-slate-500 whitespace-nowrap">2026-04-08 → 2026-07-09</span>
+            <button className="h-8 px-3 text-xs text-blue-600 border border-blue-200 rounded hover:bg-blue-50">重置</button>
+          </div>
 
-          {/* Picking Tab */}
-          {activeTab === 'picking' && (
-            <div>
-              {renderTabHeader('拣货任务', loadPickTasks)}
-              {pickingLoading ? renderLoading() :
-               pickTasks.length === 0 ? renderEmpty('暂无拣货任务') :
-               renderTable(['任务号', '订单号', 'SKU编码', '数量', '状态', '操作'],
-                 pickTasks.map((task: any, idx: number) => (
-                   <tr key={task.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{task.taskNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.orderId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.skuCode || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{task.quantity}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(task.status)}`}>
-                         {task.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {task.status === 'PENDING' && (
-                         <button
-                           onClick={() => handlePickComplete(task.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition-colors"
-                         >
-                           完成拣货
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
+          {/* Action bar */}
+          <div className="h-[52px] bg-slate-50 border-b border-slate-200 flex items-center justify-between px-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <button className="h-8 px-4 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">工单类型管理</button>
+              <button className="h-8 px-3 text-xs bg-white border border-slate-200 rounded text-slate-600">导出 v</button>
             </div>
-          )}
+            <button className="text-slate-400 hover:text-slate-600">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            </button>
+          </div>
 
-          {/* Review Tab */}
-          {activeTab === 'review' && (
-            <div>
-              {renderTabHeader('打包复核', loadReviewTasks)}
-              {reviewLoading ? renderLoading() :
-               reviewTasks.length === 0 ? renderEmpty('暂无复核任务') :
-               renderTable(['订单号', '状态', '操作'],
-                 reviewTasks.map((task: any, idx: number) => (
-                   <tr key={task.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{task.orderId || task.id}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(task.status)}`}>
-                         {task.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {task.status === 'PENDING' && (
-                         <button
-                           onClick={() => handleReviewComplete(task.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
-                         >
-                           完成复核
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
+          {/* Table */}
+          <div className="flex-1 overflow-x-auto">
+            <table className="min-w-[1600px] w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="w-10 px-3 py-3 text-left"><input type="checkbox" className="rounded" /></th>
+                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">工单号</th>
+                  <th className="w-[360px] px-3 py-3 text-left font-medium text-slate-500">工单标题</th>
+                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">紧急程度</th>
+                  <th className="w-[280px] px-3 py-3 text-left font-medium text-slate-500">客户</th>
+                  <th className="w-[200px] px-3 py-3 text-left font-medium text-slate-500">工单类型</th>
+                  <th className="w-[180px] px-3 py-3 text-left font-medium text-slate-500">创建时间</th>
+                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mockOrders.map((order) => (
+                  <tr key={order.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-3"><input type="checkbox" className="rounded" /></td>
+                    <td className="px-3 py-3">
+                      <span className="flex items-center gap-1">
+                        {order.urgent && <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block shrink-0" />}
+                        <span className="text-blue-600">{order.orderNo}</span>
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{order.title}</td>
+                    <td className="px-3 py-3">
+                      <span className={`${order.priority === '紧急' ? 'text-red-500' : 'text-slate-500'}`}>{order.priority}</span>
+                    </td>
+                    <td className="px-3 py-3 text-slate-600">{order.customer}</td>
+                    <td className="px-3 py-3 text-slate-600">{order.type}</td>
+                    <td className="px-3 py-3 text-slate-500">{order.createdAt}</td>
+                    <td className="px-3 py-3"><span className="text-blue-600 cursor-pointer hover:underline">审核</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-          {/* Shipping Tab */}
-          {activeTab === 'shipping' && (
-            <div>
-              {renderTabHeader('出库复核', loadShippingOrders)}
-              {shippingLoading ? renderLoading() :
-               shippingOrders.length === 0 ? renderEmpty('暂无待出库订单') :
-               renderTable(['订单号', '收件人', '承运商', '物流渠道', '重量', '状态', '操作'],
-                 shippingOrders.map((order: any, idx: number) => (
-                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.recipient || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.carrierName || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.logisticsChannelName || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.totalWeight ? `${order.totalWeight}kg` : '-'}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>
-                         {order.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {order.status === 'SHIPPING' && (
-                         <button
-                           onClick={() => handleShip(order.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors"
-                         >
-                           确认出库
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
+          {/* Pagination */}
+          <div className="h-12 border-t border-slate-200 flex items-center justify-end px-4 gap-3 text-xs text-slate-500 shrink-0 bg-white">
+            <span>共{totalItems}条</span>
+            <div className="flex items-center gap-1">
+              <button className="px-2 py-1 rounded hover:bg-slate-100">&lt;</button>
+              {[1, 2, 3].map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setCurrentPage(p)}
+                  className={`px-2 py-1 rounded ${p === currentPage ? 'bg-blue-600 text-white' : 'hover:bg-slate-100'}`}
+                >
+                  {p}
+                </button>
+              ))}
+              <button className="px-2 py-1 rounded hover:bg-slate-100">&gt;</button>
             </div>
-          )}
-
-          {/* Returns Tab */}
-          {activeTab === 'returns' && (
-            <div>
-              {renderTabHeader('退货收货', loadReturnOrders)}
-              {returnsLoading ? renderLoading() :
-               returnOrders.length === 0 ? renderEmpty('暂无退货订单') :
-               renderTable(['退货单号', '订单号', '客户', '状态', '创建时间', '操作'],
-                 returnOrders.map((order: any, idx: number) => (
-                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{order.returnNo || order.id}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.orderId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.customerName || order.customerId || '-'}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>
-                         {order.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3 text-slate-600">
-                       {order.createdAt ? new Date(order.createdAt).toLocaleDateString('zh-CN') : '-'}
-                     </td>
-                     <td className="px-4 py-3">
-                       {order.status === 'PENDING' && (
-                         <button
-                           onClick={() => handleReturnReceive(order.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-rose-600 rounded-lg hover:bg-rose-700 transition-colors"
-                         >
-                           收货确认
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
+            <span>20条/页</span>
+            <div className="flex items-center gap-1">
+              <span>前往</span>
+              <input className="w-8 h-6 border border-slate-200 rounded text-center text-xs" defaultValue={1} />
             </div>
-          )}
-
-          {/* Exceptions Tab */}
-          {activeTab === 'exceptions' && (
-            <div>
-              {renderTabHeader('异常件处理', loadExceptionCases)}
-              {exceptionsLoading ? renderLoading() :
-               exceptionCases.length === 0 ? renderEmpty('暂无异常件') :
-               renderTable(['案例号', '订单', '类型', '描述', '状态', '操作'],
-                 exceptionCases.map((ec: any, idx: number) => (
-                   <tr key={ec.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{ec.caseNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{ec.orderId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{ec.type || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{ec.description || '-'}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(ec.status)}`}>
-                         {ec.status}
-                       </span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {ec.status === 'PENDING' && (
-                         <button
-                           onClick={() => handleResolveException(ec.id)}
-                           className="px-3 py-1 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
-                         >
-                           标记解决
-                         </button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
-
-          {/* Packing Tab */}
-          {activeTab === 'packing' && (
-            <div>
-              {renderTabHeader('打包作业', loadPackingOrders)}
-              {packingLoading ? renderLoading() :
-               packingOrders.length === 0 ? renderEmpty('暂无待打包订单') :
-               renderTable(['订单号', '收件人', 'SKU数', '总件数', '状态', '操作'],
-                 packingOrders.map((order: any, idx: number) => (
-                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.recipient || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.items?.length || 0}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.totalQty || '-'}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>{order.status}</span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {order.status === 'PICKING' && (
-                         <button onClick={() => handlePackComplete(order.id)} className="px-3 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors">完成打包</button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
-
-          {/* Weighing Tab */}
-          {activeTab === 'weighing' && (
-            <div>
-              {renderTabHeader('称重录入', loadWeighingOrders)}
-              {weighingLoading ? renderLoading() :
-               weighingOrders.length === 0 ? renderEmpty('暂无待称重订单') :
-               renderTable(['订单号', '收件人', '承运商', '重量(kg)', '长/宽/高(cm)', '操作'],
-                 weighingOrders.map((order: any, idx: number) => {
-                   const input = weighInputs[order.id] || { weight: 0, length: 0, width: 0, height: 0 };
-                   return (
-                     <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                       <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
-                       <td className="px-4 py-3 text-slate-600">{order.recipient || '-'}</td>
-                       <td className="px-4 py-3 text-slate-600">{order.carrierName || '-'}</td>
-                       <td className="px-4 py-3">
-                         <input type="number" step="0.1" min="0" placeholder="kg" value={input.weight || ''}
-                           onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], weight: Number(e.target.value), length: prev[order.id]?.length || 0, width: prev[order.id]?.width || 0, height: prev[order.id]?.height || 0 } }))}
-                           className="w-20 px-2 py-1 border border-slate-200 rounded text-sm" />
-                       </td>
-                       <td className="px-4 py-3">
-                         <div className="flex gap-1">
-                           <input type="number" step="0.1" min="0" placeholder="长" value={input.length || ''} onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], length: Number(e.target.value) } }))} className="w-14 px-1 py-1 border border-slate-200 rounded text-sm" />
-                           <input type="number" step="0.1" min="0" placeholder="宽" value={input.width || ''} onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], width: Number(e.target.value) } }))} className="w-14 px-1 py-1 border border-slate-200 rounded text-sm" />
-                           <input type="number" step="0.1" min="0" placeholder="高" value={input.height || ''} onChange={e => setWeighInputs(prev => ({ ...prev, [order.id]: { ...prev[order.id], height: Number(e.target.value) } }))} className="w-14 px-1 py-1 border border-slate-200 rounded text-sm" />
-                         </div>
-                       </td>
-                       <td className="px-4 py-3">
-                         <button onClick={() => handleWeigh(order.id)} disabled={!input.weight} className="px-3 py-1 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors">保存称重</button>
-                       </td>
-                     </tr>
-                   );
-                 })
-               )
-              }
-            </div>
-          )}
-
-          {/* Relabel Tab */}
-          {activeTab === 'relabel' && (
-            <div>
-              {renderTabHeader('换标管理', loadRelabelOrders)}
-              {relabelLoading ? renderLoading() :
-               relabelOrders.length === 0 ? renderEmpty('暂无换标任务') :
-               renderTable(['换标单号', '旧SKU', '新SKU', '数量', '状态', '操作'],
-                 relabelOrders.map((order: any, idx: number) => (
-                   <tr key={order.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800">{order.orderNo}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.oldSkuCode || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.newSkuCode || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{order.quantity}</td>
-                     <td className="px-4 py-3">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(order.status)}`}>{order.status}</span>
-                     </td>
-                     <td className="px-4 py-3">
-                       {order.status === 'PENDING' && (
-                         <button onClick={() => handleRelabelComplete(order.id)} className="px-3 py-1 text-xs font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors">完成换标</button>
-                       )}
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
-
-          {/* Location Adjustment Tab */}
-          {activeTab === 'location-adjust' && (
-            <div>
-              {renderTabHeader('库位调整', () => { loadLocations(); setShowAddLocation(true); })}
-              {showAddLocation && (
-                <div className="mb-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex gap-3 items-end">
-                  <div className="flex-1">
-                    <label className="block text-xs font-medium text-slate-600 mb-1">新增库位编码</label>
-                    <input value={newLocationCode} onChange={e => setNewLocationCode(e.target.value)} placeholder="例: ZONE-A-1-1" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
-                  </div>
-                  <button onClick={handleAddLocation} className="px-4 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">添加</button>
-                  <button onClick={() => { setShowAddLocation(false); setNewLocationCode(''); }} className="px-4 py-2 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">取消</button>
-                </div>
-              )}
-              {locationLoading ? renderLoading() :
-               locations.length === 0 ? renderEmpty('暂无库位数据') :
-               renderTable(['库位编码', '仓库', '区域', '创建时间', '操作'],
-                 locations.map((loc: any, idx: number) => (
-                   <tr key={loc.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 font-medium text-slate-800 font-mono">{loc.code}</td>
-                     <td className="px-4 py-3 text-slate-600">{loc.warehouseId || loc.warehouseName || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{loc.zoneCode || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{loc.createdAt ? new Date(loc.createdAt).toLocaleDateString('zh-CN') : '-'}</td>
-                     <td className="px-4 py-3">
-                       <button className="px-3 py-1 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">编辑</button>
-                     </td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
-
-          {/* Logs Tab */}
-          {activeTab === 'logs' && (
-            <div>
-              {renderTabHeader('操作记录', loadOperationLogs)}
-              {logsLoading ? renderLoading() :
-               operationLogs.length === 0 ? renderEmpty('暂无操作记录') :
-               renderTable(['时间', '用户', '模块', '操作', '目标', '详情'],
-                 operationLogs.map((log: any, idx: number) => (
-                   <tr key={log.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                     <td className="px-4 py-3 text-slate-600">
-                       {log.createdAt ? new Date(log.createdAt).toLocaleString('zh-CN') : '-'}
-                     </td>
-                     <td className="px-4 py-3 text-slate-600">{log.username || log.userId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{log.module || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{log.action || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600">{log.targetId || '-'}</td>
-                     <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{log.detail || '-'}</td>
-                   </tr>
-                 ))
-               )
-              }
-            </div>
-          )}
+          </div>
         </div>
       </div>
-
-      <WMSAIWidget />
     </div>
   );
 }

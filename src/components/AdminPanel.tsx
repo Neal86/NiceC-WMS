@@ -1,12 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Shield, Users, Settings, Building2, Clipboard, DollarSign, 
-  Layers, MessageSquare, ChevronLeft, Plus, Search, Trash2, 
-  Edit, Check, X, HelpCircle, Save, CheckCircle, FileText,
-  AlertTriangle, Play, RefreshCw, BarChart
-} from 'lucide-react';
-import api, { logApi, metadataApi, warehouseApi, customerApi, userApi } from '../api';
-import { FeedbackManagementTable } from './feedback/FeedbackManagementTable';
+import React, { useState } from 'react';
+import { HelpCircle, Home, Users, Globe, Package, Truck, Warehouse, Settings, Calculator, DollarSign, BarChart, Key, Wrench, ChevronDown, Info } from 'lucide-react';
 
 interface AdminPanelProps {
   currentUser: any;
@@ -14,1551 +7,232 @@ interface AdminPanelProps {
   initialPath?: string;
 }
 
-// Sub-path definitions matching standard URLs
-type AdminSubPath = 'dashboard' | 'users' | 'roles' | 'warehouses' | 'customers' | 'billing-rules' | 'operation-logs' | 'feedback' | 'settings';
+const sidebarItems = [
+  { label: '首页', icon: Home },
+  { label: '客户管理', icon: Users },
+  { label: '全局订单', icon: Globe },
+  { label: '全局库存', icon: Package },
+  { label: '产品管理', icon: Package },
+  { label: '物流管理', icon: Truck },
+  { label: '仓库列表', icon: Warehouse },
+  { label: '运营设置', icon: Settings },
+  { label: '报价设置', icon: Calculator },
+  { label: '财务结算', icon: DollarSign },
+  { label: '统计分析', icon: BarChart },
+  { label: '账号权限', icon: Key },
+  { label: '系统设置', icon: Settings },
+  { label: '工具模块', icon: Wrench },
+];
+
+const chartDates = [
+  '2026-06-08', '2026-06-09', '2026-06-11', '2026-06-12', '2026-06-15',
+  '2026-06-17', '2026-06-21', '2026-06-22', '2026-06-29', '2026-06-30', '2026-07-03'
+];
+
+const chartValues = [2, 1.8, 1, 1, 1, 1, 1.2, 2, 1.5, 1, 1];
 
 export default function AdminPanel({ currentUser, onNavigateBack, initialPath = '/admin' }: AdminPanelProps) {
-  // Resolve active sub-path from path string
-  const getSubPathFromUrl = (urlPath: string): AdminSubPath => {
-    if (urlPath.includes('/admin/users')) return 'users';
-    if (urlPath.includes('/admin/roles')) return 'roles';
-    if (urlPath.includes('/admin/warehouses')) return 'warehouses';
-    if (urlPath.includes('/admin/customers')) return 'customers';
-    if (urlPath.includes('/admin/billing-rules')) return 'billing-rules';
-    if (urlPath.includes('/admin/operation-logs')) return 'operation-logs';
-    if (urlPath.includes('/admin/feedback')) return 'feedback';
-    if (urlPath.includes('/admin/settings')) return 'settings';
-    return 'dashboard';
-  };
+  const [activeSidebar, setActiveSidebar] = useState('首页');
 
-  const [subPath, setSubPath] = useState<AdminSubPath>(getSubPathFromUrl(initialPath));
-
-  // Sync with window.location when changed
-  useEffect(() => {
-    const handlePopState = () => {
-      setSubPath(getSubPathFromUrl(window.location.pathname));
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
-
-  const navigateTo = (newSubPath: AdminSubPath) => {
-    const fullPath = newSubPath === 'dashboard' ? '/admin' : `/admin/${newSubPath}`;
-    window.history.pushState(null, '', fullPath);
-    setSubPath(newSubPath);
-  };
-
-  // 403 Forbidden check (Role check)
-  const isAuthorized = () => {
-    if (!currentUser) return false;
-    const role = (currentUser.role || '').toUpperCase();
-    return role === 'ADMIN' || role === 'MANAGER' || currentUser.permissions?.includes('view_admin_panel');
-  };
-
-  if (!isAuthorized()) {
-    return (
-      <div className="flex-1 bg-slate-50 flex flex-col items-center justify-center p-6 text-center select-none min-h-[500px]">
-        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4 shadow-sm animate-bounce">
-          <Shield className="w-8 h-8" />
-        </div>
-        <h2 className="text-xl font-bold text-slate-800 mb-2">403 Unauthorized / 暂无访问权限</h2>
-        <p className="text-slate-500 text-sm max-w-md mb-6 leading-relaxed">
-          您当前无权访问管理员后台。请联系系统管理员为您分配 <strong>Admin</strong> 或 <strong>Manager</strong> 角色，或开通 <strong>view_admin_panel</strong> 权限后重新尝试。
-        </p>
-        <button
-          onClick={onNavigateBack}
-          className="px-5 py-2 bg-[#062B66] hover:bg-[#062B66]/90 text-white rounded font-bold text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          <span>返回 WMS 工作台</span>
-        </button>
-      </div>
-    );
-  }
+  const chartPath = chartValues.map((v, i) => {
+    const x = 40 + (i * 520) / (chartValues.length - 1);
+    const y = 200 - (v / 2.2) * 170;
+    return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+  }).join(' ');
 
   return (
-    <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden font-sans h-screen">
-      {/* Admin Top Header Navigation */}
-      <div className="bg-white border-b border-slate-200 h-12 px-5 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              if (subPath === 'dashboard') {
-                onNavigateBack();
-              } else {
-                navigateTo('dashboard');
-              }
-            }}
-            className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-            title="返回"
-          >
-            <ChevronLeft className="w-5 h-5" />
+    <div className="min-h-screen w-full bg-slate-100 flex flex-col font-sans">
+      {/* Header */}
+      <header className="h-12 bg-[#001b44] text-white flex items-center justify-between px-3 shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">NC</div>
+          <span className="text-sm font-bold">NiceC 管理后台</span>
+          <button className="text-white/70 hover:text-white ml-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
-          <div className="h-4 w-[1px] bg-slate-200"></div>
-          <div className="flex items-center gap-2">
-            <Shield className="w-4.5 h-4.5 text-blue-600" />
-            <span className="font-bold text-slate-800 text-sm">管理员控制台 / Admin Panel</span>
-            {subPath !== 'dashboard' && (
-              <>
-                <span className="text-slate-300 text-xs">/</span>
-                <span className="text-slate-500 text-xs font-semibold uppercase">
-                  {subPath === 'users' ? '用户管理' :
-                   subPath === 'roles' ? '角色权限' :
-                   subPath === 'warehouses' ? '仓库管理' :
-                   subPath === 'customers' ? '客户管理' :
-                   subPath === 'billing-rules' ? '计费规则' :
-                   subPath === 'operation-logs' ? '操作日志' :
-                   subPath === 'feedback' ? '反馈管理' :
-                   subPath === 'settings' ? '系统设置' : ''}
-                </span>
-              </>
-            )}
-          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="bg-white text-slate-800 text-xs px-6 h-12 flex items-center rounded-t-md font-medium">首页</div>
+          <div className="text-white/80 px-4 h-12 flex items-center text-xs">客户列表</div>
         </div>
         <div className="flex items-center gap-3 text-xs">
-          <span className="text-slate-400 font-medium">当前操作员:</span>
-          <span className="bg-blue-50 text-blue-700 font-mono font-bold px-2 py-0.5 rounded border border-blue-100">
-            {currentUser?.username} ({currentUser?.role})
-          </span>
-        </div>
-      </div>
-
-      {/* Main Admin Content Area */}
-      <div className="flex-1 overflow-auto p-6">
-        {subPath === 'dashboard' && (
-          <AdminDashboard navigateTo={navigateTo} />
-        )}
-        {subPath === 'users' && <UserManagement />}
-        {subPath === 'roles' && <RolesPermissions />}
-        {subPath === 'warehouses' && <WarehouseManagement />}
-        {subPath === 'customers' && <CustomerManagement />}
-        {subPath === 'billing-rules' && <BillingRules />}
-        {subPath === 'operation-logs' && <OperationLogs />}
-        {subPath === 'feedback' && (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 min-h-[500px]">
-            <div className="mb-4 flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">反馈管理模块 (集成)</h3>
-                <p className="text-xs text-slate-400">已与系统中的反馈上报及 AI 回复引擎深度联通</p>
-              </div>
-              <button
-                onClick={() => navigateTo('dashboard')}
-                className="text-xs text-blue-600 hover:underline font-bold flex items-center gap-1"
-              >
-                返回控制台
-              </button>
-            </div>
-            <FeedbackManagementTable />
+          <span className="text-white/60">2026-07-09 12:02:12 UTC+8</span>
+          <span className="text-white/70">产品教学</span>
+          <span className="text-white/70">中文</span>
+          <div className="w-6 h-6 rounded-full bg-blue-300 flex items-center justify-center text-xs text-white font-bold">
+            {currentUser?.username?.charAt(0).toUpperCase() || 'U'}
           </div>
-        )}
-        {subPath === 'settings' && <SystemSettings />}
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   1. ADMIN DASHBOARD VIEW
-   ============================================================================ */
-interface DashboardCardProps {
-  title: string;
-  engTitle: string;
-  desc: string;
-  icon: React.ComponentType<any>;
-  colorClass: string;
-  onClick: () => void;
-}
-
-function AdminDashboard({ navigateTo }: { navigateTo: (path: AdminSubPath) => void }) {
-  const cards: { key: AdminSubPath; title: string; engTitle: string; desc: string; icon: any; color: string }[] = [
-    {
-      key: 'users',
-      title: '用户管理',
-      engTitle: 'User Management',
-      desc: '系统操作员及仓库人员账号管理、激活/禁用及权限指派。',
-      icon: Users,
-      color: 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:border-indigo-300'
-    },
-    {
-      key: 'roles',
-      title: '角色权限',
-      engTitle: 'Roles & Permissions',
-      desc: '定义业务系统角色(Admin, Manager, Operator)及精确菜单访问权限。',
-      icon: Shield,
-      color: 'bg-pink-50 text-pink-600 border-pink-100 hover:border-pink-300'
-    },
-    {
-      key: 'warehouses',
-      title: '仓库管理',
-      engTitle: 'Warehouse Management',
-      desc: '多仓实体配置、物理地址规划、仓容利用率与库区监控。',
-      icon: Building2,
-      color: 'bg-emerald-50 text-emerald-600 border-emerald-100 hover:border-emerald-300'
-    },
-    {
-      key: 'customers',
-      title: '客户管理',
-      engTitle: 'Customer Management',
-      desc: '入驻 WMS 的电商客户档案、合同周期、服务费模式及对接。',
-      icon: Clipboard,
-      color: 'bg-blue-50 text-blue-600 border-blue-100 hover:border-blue-300'
-    },
-    {
-      key: 'billing-rules',
-      title: '计费规则',
-      engTitle: 'Billing Rules',
-      desc: '设置各客户的日常仓储租金、出库操作费、贴标及渠道折扣。',
-      icon: DollarSign,
-      color: 'bg-amber-50 text-amber-600 border-amber-100 hover:border-amber-300'
-    },
-    {
-      key: 'operation-logs',
-      title: '操作日志',
-      engTitle: 'Operation Logs',
-      desc: '对系统核心出入库、盘点、移库动作的审计及追溯日志。',
-      icon: FileText,
-      color: 'bg-purple-50 text-purple-600 border-purple-100 hover:border-purple-300'
-    },
-    {
-      key: 'feedback',
-      title: '反馈管理',
-      engTitle: 'Feedback Management',
-      desc: '统一收集、审核和指派仓库前线作业人员提交的故障与建议。',
-      icon: MessageSquare,
-      color: 'bg-teal-50 text-teal-600 border-teal-100 hover:border-teal-300'
-    },
-    {
-      key: 'settings',
-      title: '系统设置',
-      engTitle: 'System Settings',
-      desc: 'WMS系统名称、多语言默认设置、三方 API 密钥及集成参数。',
-      icon: Settings,
-      color: 'bg-slate-50 text-slate-600 border-slate-100 hover:border-slate-300'
-    }
-  ];
-
-  return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Banner Card */}
-      <div className="bg-gradient-to-r from-blue-700 to-[#062B66] rounded-xl text-white p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-lg font-bold">欢迎进入 WMS 系统控制后台</h2>
-          <p className="text-white/80 text-xs mt-1 max-w-xl">
-            作为管理员，您可以在这里对本系统的核心操作员、仓储费用计费率、运行日志以及全局物理仓库实体、商户契约进行统一控制。
-          </p>
+          <span className="text-white/80">{currentUser?.email || 'neal@nicec.net'}</span>
         </div>
-        <div className="bg-white/10 px-4 py-3 rounded-lg border border-white/10 flex items-center gap-3 self-stretch md:self-auto">
-          <div className="text-left font-mono">
-            <div className="text-[10px] text-white/60">SYSTEM STATUS</div>
-            <div className="text-sm font-bold text-emerald-400">● Core Online</div>
-          </div>
-          <div className="h-6 w-[1px] bg-white/20"></div>
-          <div className="text-left font-mono">
-            <div className="text-[10px] text-white/60">VERSION</div>
-            <div className="text-sm font-bold">v3.5.0-Dev</div>
-          </div>
-        </div>
-      </div>
+      </header>
 
-      {/* Grid of Cards */}
-      <div>
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">系统后台模块看板</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {cards.map((card) => {
-            const IconComponent = card.icon;
-            return (
-              <button
-                key={card.key}
-                onClick={() => navigateTo(card.key)}
-                className={`text-left p-5 bg-white border rounded-xl hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between min-h-[175px]`}
-              >
-                <div className="space-y-2">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center border ${card.color} transition-all`}>
-                    <IconComponent className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{card.title}</h4>
-                    <span className="text-[10px] text-slate-400 font-semibold uppercase">{card.engTitle}</span>
-                  </div>
-                  <p className="text-slate-500 text-xs leading-relaxed line-clamp-3">
-                    {card.desc}
-                  </p>
-                </div>
-                <div className="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between text-xs font-bold text-blue-600 group-hover:translate-x-1 transition-transform self-stretch">
-                  <span>进入管理</span>
-                  <span>→</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   2. USER MANAGEMENT MODULE
-   ============================================================================ */
-function UserManagement() {
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newRole, setNewRole] = useState('WAREHOUSE_OPERATOR');
-
-  const fetchUsers = async () => {
-    try {
-      const data = await userApi.getUsers();
-      setUsers(data);
-    } catch (err) {
-      console.error('Failed to fetch users', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchUsers(); }, []);
-
-  const handleToggleStatus = async (id: string) => {
-    const user = users.find(u => u.id === id);
-    if (!user) return;
-    const nextStatus = user.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
-    await userApi.updateUser(id, { status: nextStatus });
-    await fetchUsers();
-  };
-
-  const handleDeleteUser = async (id: string) => {
-    await userApi.deleteUser(id);
-    await fetchUsers();
-  };
-
-  const handleAddUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUsername || !newPassword) return;
-    await userApi.createUser({ username: newUsername, password: newPassword, name: newName, role: newRole });
-    setNewUsername('');
-    setNewPassword('');
-    setNewName('');
-    setNewRole('WAREHOUSE_OPERATOR');
-    setIsAddOpen(false);
-    await fetchUsers();
-  };
-
-  const filteredUsers = users.filter((u: any) =>
-    (u.username || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (u.name || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h3 className="text-base font-bold text-slate-800">系统用户列表</h3>
-          <p className="text-xs text-slate-400">管理授权登录本 NiceC WMS 系统的操作账号</p>
-        </div>
-        <div className="flex gap-2 self-stretch sm:self-auto">
-          <div className="relative flex-1 sm:w-60">
-            <Search className="absolute left-2.5 top-2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="搜索用户名或真实姓名..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans"
-            />
-          </div>
-          <button
-            onClick={() => setIsAddOpen(true)}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-xs flex items-center gap-1 cursor-pointer shadow-sm transition-all"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>新增用户</span>
-          </button>
-        </div>
-      </div>
-
-      {isAddOpen && (
-        <form onSubmit={handleAddUser} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
-          <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 pb-2 border-b border-slate-100">
-            <Plus className="w-4 h-4 text-blue-600" />
-            <span>创建新操作账号</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">用户名 / 邮箱 (登陆账号) *</label>
-              <input
-                type="email"
-                required
-                placeholder="eg: worker@nicec.net"
-                value={newUsername}
-                onChange={e => setNewUsername(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">密码 *</label>
-              <input
-                type="password"
-                required
-                placeholder="初始登录密码"
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">真实姓名</label>
-              <input
-                type="text"
-                placeholder="eg: 张操作"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">指派角色 *</label>
-              <select
-                value={newRole}
-                onChange={e => setNewRole(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="WAREHOUSE_OPERATOR">WAREHOUSE_OPERATOR (操作员)</option>
-                <option value="MANAGER">MANAGER (仓库经理)</option>
-                <option value="ADMIN">ADMIN (超级管理员)</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsAddOpen(false)}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold text-xs"
-            >
-              保存并授权
-            </button>
-          </div>
-        </form>
-      )}
-
-      {loading ? (
-        <div className="text-center py-8 text-xs text-slate-400">加载中...</div>
-      ) : (
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full border-collapse text-left text-xs font-sans">
-          <thead className="bg-[#f8fafc] border-b border-slate-200 text-slate-500 font-bold">
-            <tr>
-              <th className="px-4 py-2.5">用户账号 (Email)</th>
-              <th className="px-4 py-2.5">真实姓名</th>
-              <th className="px-4 py-2.5">角色定位</th>
-              <th className="px-4 py-2.5">当前状态</th>
-              <th className="px-4 py-2.5">创建时间</th>
-              <th className="px-4 py-2.5 text-right">管理操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 text-slate-700">
-            {filteredUsers.map((user: any) => (
-              <tr key={user.id} className="hover:bg-slate-50/60 transition-colors">
-                <td className="px-4 py-3 font-mono font-medium text-slate-900">{user.username}</td>
-                <td className="px-4 py-3 font-medium">{user.name || '-'}</td>
-                <td className="px-4 py-3">
-                  <span className={`inline-flex items-center gap-1 font-mono text-[10px] font-bold px-2 py-0.5 rounded ${
-                    user.role === 'ADMIN' ? 'bg-purple-50 text-purple-700 border border-purple-100' :
-                    user.role === 'MANAGER' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                    'bg-slate-100 text-slate-600'
-                  }`}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    user.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${user.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                    {user.status === 'ACTIVE' ? '已启用' : '已禁用'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-slate-400 font-mono">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '-'}</td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button
-                      onClick={() => handleToggleStatus(user.id)}
-                      className={`text-[10px] font-bold px-2 py-1 rounded transition-colors border ${
-                        user.status === 'ACTIVE'
-                          ? 'border-red-200 text-red-600 hover:bg-red-50'
-                          : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'
-                      }`}
-                    >
-                      {user.status === 'ACTIVE' ? '禁用' : '启用'}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteUser(user.id)}
-                      className="border border-red-200 text-red-500 hover:bg-red-50 text-[10px] font-bold px-2 py-1 rounded"
-                    >
-                      删除
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================================================================
-   3. ROLES & PERMISSIONS MODULE
-   ============================================================================ */
-function RolesPermissions() {
-  const [selectedRole, setSelectedRole] = useState<'ADMIN' | 'MANAGER' | 'OPERATOR'>('MANAGER');
-  
-  const [permissions, setPermissions] = useState({
-    ADMIN: ['view_admin_panel', 'manage_orders', 'view_reports', 'edit_billing', 'manage_users', 'view_all_feedbacks'],
-    MANAGER: ['view_admin_panel', 'manage_orders', 'view_reports', 'view_all_feedbacks'],
-    OPERATOR: ['manage_orders', 'view_all_feedbacks']
-  });
-
-  const availablePermissions = [
-    { key: 'view_admin_panel', label: '访问后台控制面板', desc: '允许账号进入管理员/经理配置端' },
-    { key: 'manage_users', label: '操作员账号管理', desc: '允许增加、禁用、编辑全部操作员及分配角色' },
-    { key: 'manage_orders', label: '出入库核心交易管理', desc: '核心业务：允许生成波次、修改订单数据、操作打印贴标' },
-    { key: 'edit_billing', label: '计费率与财务费率设定', desc: '允许编辑仓库存储、打单及商户扣费配置' },
-    { key: 'view_reports', label: '财务与产能报表查看', desc: '允许导出及查看全部商户的账单日志和每日库容利用率' },
-    { key: 'view_all_feedbacks', label: '反馈管理查阅与响应', desc: '允许查阅并直接使用 AI 助手回复作业端提交的问题' },
-  ];
-
-  const handleTogglePermission = (permissionKey: string) => {
-    setPermissions(prev => {
-      const rolePerms = prev[selectedRole];
-      const nextPerms = rolePerms.includes(permissionKey)
-        ? rolePerms.filter(k => k !== permissionKey)
-        : [...rolePerms, permissionKey];
-      return {
-        ...prev,
-        [selectedRole]: nextPerms
-      };
-    });
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-4">
-      <div>
-        <h3 className="text-base font-bold text-slate-800">角色与权限规划</h3>
-        <p className="text-xs text-slate-400">读取权限由 server/permissions.ts 控制（只读展示）</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {/* Left Roles Sidebar */}
-        <div className="space-y-2">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">选择要查看的角色</span>
-          {['ADMIN', 'MANAGER', 'OPERATOR'].map((r) => {
-            const isActive = selectedRole === r;
-            return (
-              <button
-                key={r}
-                onClick={() => setSelectedRole(r as any)}
-                className={`w-full text-left p-3.5 border rounded-xl cursor-pointer transition-all ${
-                  isActive 
-                    ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
-                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-sm">{r}</span>
-                  <Shield className={`w-4 h-4 ${isActive ? 'text-white/80' : 'text-slate-400'}`} />
-                </div>
-                <p className={`text-[11px] mt-1.5 leading-relaxed ${isActive ? 'text-white/80' : 'text-slate-400'}`}>
-                  {r === 'ADMIN' ? '系统顶级特权，对全局设置、账单规则及用户名单拥有不受限制的完全控制权。' :
-                   r === 'MANAGER' ? '仓库日常生产管理，配置出入库逻辑，查看统计报告，但不能修改全局费率参数。' :
-                   '负责具体的物理拣选、贴标出货、盘点更新，不暴露敏感财务和高危配置项。'}
-                </p>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Right Permissions Panel */}
-        <div className="md:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h4 className="text-sm font-bold text-slate-800 font-mono">{selectedRole} 的权限范围（只读）</h4>
-              <p className="text-[11px] text-slate-400 mt-0.5">权限由服务器端 server/permissions.ts 控制，前端仅作展示</p>
-            </div>
-          </div>
-
-          <div className="space-y-2.5">
-            {availablePermissions.map((perm) => {
-              const hasPerm = permissions[selectedRole].includes(perm.key);
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <aside className="w-[136px] bg-[#071226] shrink-0 overflow-y-auto">
+          <nav className="py-2">
+            {sidebarItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeSidebar === item.label;
               return (
-                <div 
-                  key={perm.key}
-                  onClick={() => handleTogglePermission(perm.key)}
-                  className={`p-3 rounded-lg border transition-all cursor-pointer flex items-start gap-3 select-none ${
-                    hasPerm 
-                      ? 'bg-blue-50/50 border-blue-100' 
-                      : 'bg-slate-50/30 border-slate-100 hover:bg-slate-50/80'
+                <button
+                  key={item.label}
+                  onClick={() => setActiveSidebar(item.label)}
+                  className={`w-full text-left px-4 py-2.5 text-xs flex items-center gap-2 ${
+                    isActive ? 'bg-blue-600 text-white rounded mx-1 px-3' : 'text-slate-300 hover:bg-slate-800'
                   }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={hasPerm}
-                    onChange={() => {}} // handled by div onClick
-                    className="mt-0.5 h-3.5 w-3.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-                  />
-                  <div>
-                    <div className="text-xs font-bold text-slate-800">{perm.label}</div>
-                    <div className="text-[10px] text-slate-400 font-mono mt-0.5">{perm.key}</div>
-                    <p className="text-slate-500 text-[11px] mt-1 leading-relaxed">{perm.desc}</p>
-                  </div>
-                </div>
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.label}</span>
+                </button>
               );
             })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+          </nav>
+        </aside>
 
-/* ============================================================================
-   4. WAREHOUSE MANAGEMENT MODULE
-   ============================================================================ */
-function WarehouseManagement() {
-  const [warehouses, setWarehouses] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [address, setAddress] = useState('');
-  const [editingWh, setEditingWh] = useState<any>(null);
-  const [editName, setEditName] = useState('');
-  const [editCode, setEditCode] = useState('');
-  const [editAddress, setEditAddress] = useState('');
-
-  const fetchWarehouses = async () => {
-    try {
-      const data = await warehouseApi.getWarehouses();
-      setWarehouses(data);
-    } catch (err) {
-      console.error('Failed to fetch warehouses', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchWarehouses(); }, []);
-
-  const handleAddWarehouse = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !code || !address) return;
-    await warehouseApi.createWarehouse({ name, code, address });
-    setIsAddOpen(false);
-    setName('');
-    setCode('');
-    setAddress('');
-    await fetchWarehouses();
-  };
-
-  const handleEdit = (wh: any) => {
-    setEditingWh(wh);
-    setEditName(wh.name);
-    setEditCode(wh.code);
-    setEditAddress(wh.address);
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingWh || !editName || !editCode || !editAddress) return;
-    await warehouseApi.updateWarehouse(editingWh.id, { name: editName, code: editCode, address: editAddress });
-    setEditingWh(null);
-    await fetchWarehouses();
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('确定要删除该仓库吗？此操作不可撤销。')) return;
-    await warehouseApi.deleteWarehouse(id);
-    await fetchWarehouses();
-  };
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      <div className="flex justify-between items-center">
-        <div>
-          <h3 className="text-base font-bold text-slate-800">实体多仓网络规划</h3>
-          <p className="text-xs text-slate-400">配置您在美东、美西以及中部的核心保税仓、海外配发仓物理属性</p>
-        </div>
-        <button
-          onClick={() => setIsAddOpen(true)}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-xs flex items-center gap-1 cursor-pointer transition-all shadow-sm"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>规划新仓库</span>
-        </button>
-      </div>
-
-      {isAddOpen && (
-        <form onSubmit={handleAddWarehouse} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
-          <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 pb-2 border-b border-slate-100">
-            <Building2 className="w-4 h-4 text-blue-600" />
-            <span>新增仓库设施规划</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">仓库设施名称 *</label>
-              <input
-                type="text"
-                required
-                placeholder="名称前缀及地区标志"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">识别编码 *</label>
-              <input
-                type="text"
-                required
-                placeholder="ZIP Code e.g. 75001"
-                value={code}
-                onChange={e => setCode(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">物理详情地址 *</label>
-              <input
-                type="text"
-                required
-                placeholder="精确物理设施地址"
-                value={address}
-                onChange={e => setAddress(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsAddOpen(false)}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold text-xs"
-            >
-              提交设施备案
+        {/* Main content */}
+        <main className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-100">
+          {/* Warehouse filter */}
+          <div className="flex items-center gap-2">
+            <button className="h-8 px-3 bg-white border border-slate-200 rounded text-xs text-slate-600 flex items-center gap-1">
+              全部仓库 <ChevronDown className="w-3 h-3" />
             </button>
           </div>
-        </form>
-      )}
 
-      {editingWh && (
-        <form onSubmit={handleUpdate} className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
-          <h4 className="text-xs font-bold text-amber-700 flex items-center gap-1.5 pb-2 border-b border-amber-100">
-            <Edit className="w-4 h-4 text-amber-600" />
-            <span>编辑仓库: {editingWh.name}</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">仓库设施名称 *</label>
-              <input type="text" required placeholder="名称前缀及地区标志" value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          {/* Stat cards grid */}
+          <div className="grid grid-cols-7 gap-3">
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">充值审核</div>
+              <div className="text-xs text-slate-400">待审核</div>
+              <div className="text-xl font-bold text-slate-800">0</div>
             </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">识别编码 *</label>
-              <input type="text" required placeholder="ZIP Code e.g. 75001" value={editCode} onChange={e => setEditCode(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">产品审核</div>
+              <div className="text-xs text-slate-400">待审核</div>
+              <div className="text-xl font-bold text-slate-800">0</div>
             </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">物理详情地址 *</label>
-              <input type="text" required placeholder="精确物理设施地址" value={editAddress} onChange={e => setEditAddress(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">入库</div>
+              <div className="text-xs text-slate-400">待入库</div>
+              <div className="text-xl font-bold text-slate-800">13</div>
             </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setEditingWh(null)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs">取消</button>
-            <button type="submit" className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-bold text-xs">保存修改</button>
-          </div>
-        </form>
-      )}
-
-      {loading ? (
-        <div className="text-center py-8 text-xs text-slate-400">加载中...</div>
-      ) : (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {warehouses.map((wh: any) => (
-          <div key={wh.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
-            <div className="space-y-3">
-              <div className="flex items-start justify-between">
-                <div className="bg-blue-50 text-[#062B66] w-9 h-9 rounded-lg flex items-center justify-center border border-blue-100">
-                  <Building2 className="w-5 h-5" />
-                </div>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
-                  运营中
-                </span>
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-slate-800">{wh.name}</h4>
-                <p className="text-[11px] text-slate-400 font-mono mt-0.5">识别编码: {wh.code}</p>
-              </div>
-              <div className="text-xs text-slate-500 leading-relaxed font-sans bg-slate-50 rounded p-2.5 space-y-1">
-                <div><strong className="text-slate-600">地址:</strong> {wh.address}</div>
-              </div>
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">出库</div>
+              <div className="flex justify-between text-xs text-slate-400"><span>一件代发</span><span className="text-slate-700 font-semibold">97</span></div>
+              <div className="flex justify-between text-xs text-slate-400 mt-1"><span>备货中转</span><span className="text-slate-700 font-semibold">0</span></div>
             </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button onClick={() => handleEdit(wh)} className="text-[10px] font-bold px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors">编辑</button>
-              <button onClick={() => handleDelete(wh.id)} className="text-[10px] font-bold px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors">删除</button>
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">截单</div>
+              <div className="text-xs text-slate-400">待处理</div>
+              <div className="text-xl font-bold text-slate-800">0</div>
             </div>
-          </div>
-        ))}
-      </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================================================================
-   5. CUSTOMER MANAGEMENT MODULE
-   ============================================================================ */
-function CustomerManagement() {
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [contact, setContact] = useState('');
-  const [email, setEmail] = useState('');
-  const [editingCust, setEditingCust] = useState<any>(null);
-  const [editName, setEditName] = useState('');
-  const [editCode, setEditCode] = useState('');
-  const [editContact, setEditContact] = useState('');
-  const [editEmail, setEditEmail] = useState('');
-
-  const fetchCustomers = async () => {
-    try {
-      const data = await customerApi.getCustomers();
-      setCustomers(data);
-    } catch (err) {
-      console.error('Failed to fetch customers', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchCustomers(); }, []);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !code) return;
-    await customerApi.createCustomer({ name, code, contact, email });
-    setIsAddOpen(false);
-    setName('');
-    setCode('');
-    setContact('');
-    setEmail('');
-    await fetchCustomers();
-  };
-
-  const handleEdit = (cust: any) => {
-    setEditingCust(cust);
-    setEditName(cust.name);
-    setEditCode(cust.code);
-    setEditContact(cust.contact || '');
-    setEditEmail(cust.email || '');
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingCust || !editName || !editCode) return;
-    await customerApi.updateCustomer(editingCust.id, { name: editName, code: editCode, contact: editContact, email: editEmail });
-    setEditingCust(null);
-    await fetchCustomers();
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('确定要删除该客户吗？此操作不可撤销。')) return;
-    await customerApi.deleteCustomer(id);
-    await fetchCustomers();
-  };
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      <div className="flex justify-between items-center">
-        <div>
-          <h3 className="text-base font-bold text-slate-800">入驻商户名录</h3>
-          <p className="text-xs text-slate-400">核对并备案所有共享本 WMS 物理库存并建立独立账单系统的客户</p>
-        </div>
-        <button
-          onClick={() => setIsAddOpen(true)}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-xs flex items-center gap-1 cursor-pointer transition-all shadow-sm"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>登记新客户</span>
-        </button>
-      </div>
-
-      {isAddOpen && (
-        <form onSubmit={handleAdd} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
-          <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 pb-2 border-b border-slate-100">
-            <Clipboard className="w-4 h-4 text-blue-600" />
-            <span>登记商户合作契约</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">商户全称 *</label>
-              <input
-                type="text"
-                required
-                placeholder="客户中文或英文全名"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">退件</div>
+              <div className="text-xs text-slate-400">待入库</div>
+              <div className="text-xl font-bold text-slate-800">964</div>
             </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">商户简称 / 结算识别码 *</label>
-              <input
-                type="text"
-                required
-                placeholder="eg: Yukon(1108037)"
-                value={code}
-                onChange={e => setCode(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">首要联系人</label>
-              <input
-                type="text"
-                placeholder="联系人中文姓名"
-                value={contact}
-                onChange={e => setContact(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">联系人通知 Email</label>
-              <input
-                type="email"
-                placeholder="billing@customer.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsAddOpen(false)}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold text-xs"
-            >
-              备案登记
-            </button>
-          </div>
-        </form>
-      )}
-
-      {editingCust && (
-        <form onSubmit={handleUpdate} className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm space-y-3 animate-in fade-in duration-200">
-          <h4 className="text-xs font-bold text-amber-700 flex items-center gap-1.5 pb-2 border-b border-amber-100">
-            <Edit className="w-4 h-4 text-amber-600" />
-            <span>编辑客户: {editingCust.name}</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">商户全称 *</label>
-              <input type="text" required placeholder="客户中文或英文全名" value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">商户简称 / 结算识别码 *</label>
-              <input type="text" required placeholder="eg: Yukon(1108037)" value={editCode} onChange={e => setEditCode(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">首要联系人</label>
-              <input type="text" placeholder="联系人中文姓名" value={editContact} onChange={e => setEditContact(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">联系人通知 Email</label>
-              <input type="email" placeholder="billing@customer.com" value={editEmail} onChange={e => setEditEmail(e.target.value)} className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setEditingCust(null)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded font-bold text-xs">取消</button>
-            <button type="submit" className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-bold text-xs">保存修改</button>
-          </div>
-        </form>
-      )}
-
-      {loading ? (
-        <div className="text-center py-8 text-xs text-slate-400">加载中...</div>
-      ) : (
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full border-collapse text-left text-xs font-sans">
-          <thead className="bg-[#f8fafc] border-b border-slate-200 text-slate-500 font-bold">
-            <tr>
-              <th className="px-4 py-2.5">商户识别码</th>
-              <th className="px-4 py-2.5">商户全称</th>
-              <th className="px-4 py-2.5">联系人</th>
-              <th className="px-4 py-2.5">电子邮箱</th>
-              <th className="px-4 py-2.5">入驻时间</th>
-              <th className="px-4 py-2.5">签约状态</th>
-              <th className="px-4 py-2.5 text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 text-slate-700">
-            {customers.map((cust: any) => (
-              <tr key={cust.id} className="hover:bg-slate-50/60 transition-colors">
-                <td className="px-4 py-3 font-mono font-medium text-[#062B66]">{cust.code}</td>
-                <td className="px-4 py-3 font-medium text-slate-900">{cust.name}</td>
-                <td className="px-4 py-3">{cust.contact || '-'}</td>
-                <td className="px-4 py-3 font-mono">{cust.email || '-'}</td>
-                <td className="px-4 py-3 font-mono text-slate-400">{cust.createdAt ? new Date(cust.createdAt).toLocaleDateString() : '-'}</td>
-                <td className="px-4 py-3">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    合作中
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => handleEdit(cust)} className="border border-blue-200 text-blue-600 hover:bg-blue-50 text-[10px] font-bold px-2 py-1 rounded transition-colors">编辑</button>
-                    <button onClick={() => handleDelete(cust.id)} className="border border-red-200 text-red-500 hover:bg-red-50 text-[10px] font-bold px-2 py-1 rounded transition-colors">删除</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================================================================
-   6. BILLING RULES MODULE
-   ============================================================================ */
-function BillingRules() {
-  const [rules, setRules] = useState({
-    storageCost: 0.15, // per cubic meter per day
-    outboundFeeSingle: 1.50, // basic fee for single item outbound
-    outboundFeeMulti: 2.20,  // basic fee for multi-item outbound
-    labelServiceFee: 0.25,   // additional label paste charge
-    discountRateUsps: 15,    // USPS client standard discount percent
-    discountRateFedex: 10    // FedEx client standard discount percent
-  });
-
-  const [testVolume, setTestVolume] = useState('2.5');
-  const [testDays, setTestDays] = useState('30');
-  const [testType, setTestType] = useState('single');
-  const [testLabels, setTestLabels] = useState('1');
-
-  const computedStorage = parseFloat(testVolume) * rules.storageCost * parseFloat(testDays);
-  const computedOutbound = testType === 'single' ? rules.outboundFeeSingle : rules.outboundFeeMulti;
-  const computedLabels = rules.labelServiceFee * parseFloat(testLabels);
-  const computedTotal = computedStorage + computedOutbound + computedLabels;
-
-  const handleSaveRules = async () => {
-    try {
-      // Save billing rules via API
-      const rulesToSave = [
-        { code: 'STORAGE_CBM_DAY', name: '日常体积容积存储费 ($ / m³ / 天)', type: 'STORAGE', unit: 'CBM', rate: rules.storageCost, minCharge: 0, currency: 'USD', isActive: true },
-        { code: 'OUTBOUND_SINGLE', name: '单品单件出库作业费 ($ / 单)', type: 'OUTBOUND', unit: 'ORDER', rate: rules.outboundFeeSingle, minCharge: 0, currency: 'USD', isActive: true },
-        { code: 'OUTBOUND_MULTI', name: '单品多件/多品多件基本费 ($ / 单)', type: 'OUTBOUND', unit: 'ORDER', rate: rules.outboundFeeMulti, minCharge: 0, currency: 'USD', isActive: true },
-        { code: 'RELABEL_FEE', name: '人工贴标/纸张增值服务费 ($ / 张)', type: 'RELABEL', unit: 'ITEM', rate: rules.labelServiceFee, minCharge: 0, currency: 'USD', isActive: true },
-      ];
-      // Import billingApi dynamically
-      const { billingApi } = await import('../api');
-      for (const r of rulesToSave) {
-        await billingApi.createRule(r);
-      }
-      alert(`费率规则已保存到数据库！`);
-    } catch (err) {
-      alert('保存失败：' + (err instanceof Error ? err.message : 'Unknown error'));
-    }
-  };
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      <div>
-        <h3 className="text-base font-bold text-slate-800">仓储与出库计费规则</h3>
-        <p className="text-xs text-slate-400">设置对代发商户收取的日常仓储物理空间占用费、出库拣选打单手续费及耗材贴标单价</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-5">
-        {/* Left Rules Editor Form */}
-        <div className="md:col-span-3 bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
-          <h4 className="text-xs font-bold text-slate-700 pb-2 border-b border-slate-100 uppercase tracking-wider">全局收费单价设定</h4>
-          
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1">日常体积容积存储费 ($ / m³ / 天)</label>
-                <div className="relative">
-                  <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rules.storageCost}
-                    onChange={e => setRules(prev => ({ ...prev, storageCost: parseFloat(e.target.value) || 0 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded pl-6 pr-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1">单品单件出库作业费 ($ / 单)</label>
-                <div className="relative">
-                  <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rules.outboundFeeSingle}
-                    onChange={e => setRules(prev => ({ ...prev, outboundFeeSingle: parseFloat(e.target.value) || 0 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded pl-6 pr-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1">单品多件 / 多品多件基本费 ($ / 单)</label>
-                <div className="relative">
-                  <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rules.outboundFeeMulti}
-                    onChange={e => setRules(prev => ({ ...prev, outboundFeeMulti: parseFloat(e.target.value) || 0 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded pl-6 pr-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1">人工贴标 / 纸张增值服务费 ($ / 张)</label>
-                <div className="relative">
-                  <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rules.labelServiceFee}
-                    onChange={e => setRules(prev => ({ ...prev, labelServiceFee: parseFloat(e.target.value) || 0 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded pl-6 pr-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1">USPS 账面物流折扣比例 (%)</label>
-                <div className="relative">
-                  <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs">%</span>
-                  <input
-                    type="number"
-                    value={rules.discountRateUsps}
-                    onChange={e => setRules(prev => ({ ...prev, discountRateUsps: parseInt(e.target.value) || 0 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded pl-3 pr-8 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1">FEDEX 账面物流折扣比例 (%)</label>
-                <div className="relative">
-                  <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs">%</span>
-                  <input
-                    type="number"
-                    value={rules.discountRateFedex}
-                    onChange={e => setRules(prev => ({ ...prev, discountRateFedex: parseInt(e.target.value) || 0 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded pl-3 pr-8 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
+              <div className="text-xs text-slate-400 mb-1">转运</div>
+              <div className="text-xs text-slate-400">待收货</div>
+              <div className="text-xl font-bold text-slate-800">0</div>
             </div>
           </div>
 
-          <div className="flex justify-end pt-2 border-t border-slate-100">
-            <button
-              onClick={handleSaveRules}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-xs transition-all shadow-sm cursor-pointer"
-            >
-              更新全部扣费费率
-            </button>
-          </div>
-        </div>
-
-        {/* Right Interactive Fee Calculator Simulator */}
-        <div className="md:col-span-2 bg-[#062B66] text-white rounded-xl shadow-md p-5 flex flex-col justify-between">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 border-b border-white/10 pb-2.5">
-              <DollarSign className="w-5 h-5 text-amber-400" />
-              <div>
-                <h4 className="text-xs font-bold">费率模拟计算沙箱</h4>
-                <p className="text-[10px] text-white/60">实时验证当前设置费率在真实订单中的扣款表现</p>
+          {/* 单量分析 */}
+          <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-800">单量分析</h3>
+                <Info className="w-3.5 h-3.5 text-slate-300" />
               </div>
+              <span className="text-xs text-slate-500">2026-06-08 → 2026-07-07</span>
             </div>
 
-            <div className="space-y-2.5 text-xs text-white/95">
-              <div>
-                <label className="block text-[10px] text-white/50 mb-1">测试货物体积 (m³)</label>
-                <input
-                  type="number"
-                  value={testVolume}
-                  onChange={e => setTestVolume(e.target.value)}
-                  className="w-full bg-white/10 border border-white/15 rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] text-white/50 mb-1">仓储天数 (Days)</label>
-                  <input
-                    type="number"
-                    value={testDays}
-                    onChange={e => setTestDays(e.target.value)}
-                    className="w-full bg-white/10 border border-white/15 rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-white/50 mb-1">出库包裹类型</label>
-                  <select
-                    value={testType}
-                    onChange={e => setTestType(e.target.value)}
-                    className="w-full bg-white/10 border border-white/15 rounded px-2 py-1 text-xs text-white focus:outline-none"
-                  >
-                    <option value="single" className="text-slate-800">单品单件</option>
-                    <option value="multi" className="text-slate-800">多品多件 / 单品多件</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] text-white/50 mb-1">贴箱标/发货标张数</label>
-                <input
-                  type="number"
-                  value={testLabels}
-                  onChange={e => setTestLabels(e.target.value)}
-                  className="w-full bg-white/10 border border-white/15 rounded px-2.5 py-1 text-xs text-white font-mono"
-                />
-              </div>
+            <div className="grid grid-cols-6 gap-3 mb-4">
+              <div><div className="text-xs text-slate-400">常规入库</div><div className="text-sm font-bold text-slate-800">0</div></div>
+              <div><div className="text-xs text-slate-400">备货中转入库</div><div className="text-sm font-bold text-slate-800">0</div></div>
+              <div><div className="text-xs text-slate-400">一件代发出库</div><div className="text-sm font-bold text-slate-800">0</div></div>
+              <div><div className="text-xs text-slate-400">备货中转出库</div><div className="text-sm font-bold text-slate-800">0</div></div>
+              <div><div className="text-xs text-slate-400">换标服务</div><div className="text-sm font-bold text-slate-800">0</div></div>
+              <div><div className="text-xs text-slate-400">次品处理</div><div className="text-sm font-bold text-slate-800">0</div></div>
             </div>
-          </div>
 
-          <div className="mt-6 bg-white/5 rounded-lg p-3.5 border border-white/5 space-y-2.5">
-            <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider block">计算结算清单</span>
-            <div className="space-y-1.5 text-[11px] text-white/70 font-mono">
-              <div className="flex justify-between">
-                <span>1. 仓储空间租赁费:</span>
-                <span className="text-white">${computedStorage.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>2. 库内分拣装箱费:</span>
-                <span className="text-white">${computedOutbound.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>3. 人工增值贴标费:</span>
-                <span className="text-white">${computedLabels.toFixed(2)}</span>
-              </div>
-              <div className="h-[1px] bg-white/10 my-1"></div>
-              <div className="flex justify-between text-xs font-bold">
-                <span className="text-amber-400">估计扣除商户账户总额:</span>
-                <span className="text-amber-400 text-sm">${computedTotal.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   7. OPERATION LOGS MODULE (REAL INTEGRATION)
-   ============================================================================ */
-function OperationLogs() {
-  const [logs, setLogs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [selectedModule, setSelectedModule] = useState('ALL');
-
-  useEffect(() => {
-    const fetchLogs = async () => {
-      try {
-        const data = await logApi.getOperationLogs();
-        if (data) {
-          setLogs(data);
-        }
-      } catch (err) {
-        console.error('Failed to load logs', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchLogs();
-  }, []);
-
-  const filteredLogs = logs.filter(l => {
-    const matchesSearch = 
-      (l.username || '').toLowerCase().includes(search.toLowerCase()) ||
-      (l.action || '').toLowerCase().includes(search.toLowerCase()) ||
-      (l.detail || '').toLowerCase().includes(search.toLowerCase());
-    const matchesModule = selectedModule === 'ALL' || l.module === selectedModule;
-    return matchesSearch && matchesModule;
-  });
-
-  const availableModules = ['ALL', ...Array.from(new Set(logs.map(l => l.module).filter(Boolean)))];
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h3 className="text-base font-bold text-slate-800">系统审计日志 (实时)</h3>
-          <p className="text-xs text-slate-400">自动记录全部操作员在 NiceC WMS 内部执行的高危敏感交互，包括移位、生成波次和出库单删除等</p>
-        </div>
-        <div className="flex gap-2 self-stretch sm:self-auto text-xs">
-          <select
-            value={selectedModule}
-            onChange={e => setSelectedModule(e.target.value)}
-            className="bg-white border border-slate-200 rounded px-2.5 py-1.5 focus:outline-none"
-          >
-            {availableModules.map(m => (
-              <option key={m} value={m}>{m === 'ALL' ? '全模块日志' : m}</option>
-            ))}
-          </select>
-          <div className="relative flex-1 sm:w-60">
-            <Search className="absolute left-2.5 top-2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="搜索操作员, 描述, 编号..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded pl-8 pr-3 py-1.5 text-xs focus:outline-none font-sans"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="p-8 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
-            <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
-            <span className="text-xs">正在从服务器审计链路拉取数据日志...</span>
-          </div>
-        ) : filteredLogs.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 text-xs">没有找到符合当前过滤条件的审计日志。</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-xs font-sans">
-              <thead className="bg-[#f8fafc] border-b border-slate-200 text-slate-500 font-bold">
-                <tr>
-                  <th className="px-4 py-2.5">记录时间</th>
-                  <th className="px-4 py-2.5">操作员账号</th>
-                  <th className="px-4 py-2.5">所属模块</th>
-                  <th className="px-4 py-2.5">执行操作</th>
-                  <th className="px-4 py-2.5">详细审计描述</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700 font-sans">
-                {filteredLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3 font-mono text-slate-400 whitespace-nowrap">{log.createdAt}</td>
-                    <td className="px-4 py-3 font-mono font-semibold text-slate-800">{log.username}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="bg-blue-50 text-[#062B66] text-[10px] font-bold px-1.5 py-0.5 rounded">
-                        {log.module}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-bold text-slate-900 whitespace-nowrap">{log.action}</td>
-                    <td className="px-4 py-3 text-slate-500 max-w-sm truncate" title={log.detail}>{log.detail}</td>
-                  </tr>
+            {/* SVG Chart */}
+            <div className="h-[230px] w-full bg-white relative">
+              <svg viewBox="0 0 600 230" className="w-full h-full" preserveAspectRatio="none">
+                {/* Grid lines */}
+                {[0, 0.5, 1, 1.5, 2].map((v, i) => (
+                  <line key={`g-${i}`} x1="0" y1={15 + i * 43} x2="600" y2={15 + i * 43} stroke="#e2e8f0" strokeWidth="1" />
                 ))}
-              </tbody>
-            </table>
+                {/* Y axis labels */}
+                <text x="8" y="19" fill="#94a3b8" fontSize="9">2</text>
+                <text x="8" y="62" fill="#94a3b8" fontSize="9">1.5</text>
+                <text x="8" y="105" fill="#94a3b8" fontSize="9">1</text>
+                <text x="8" y="148" fill="#94a3b8" fontSize="9">0.5</text>
+                <text x="8" y="191" fill="#94a3b8" fontSize="9">0</text>
+                {/* X axis labels (alternating) */}
+                {chartDates.map((d, i) => {
+                  const x = 40 + (i * 520) / (chartDates.length - 1);
+                  return (
+                    <text key={`x-${i}`} x={x} y="222" fill="#94a3b8" fontSize="8" textAnchor="middle">{d}</text>
+                  );
+                })}
+                {/* Blue curve */}
+                <path d={chartPath} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                {/* Dots on curve */}
+                {chartValues.map((v, i) => {
+                  const x = 40 + (i * 520) / (chartValues.length - 1);
+                  const y = 200 - (v / 2.2) * 170;
+                  return <circle key={`dot-${i}`} cx={x} cy={y} r="3" fill="#3b82f6" />;
+                })}
+              </svg>
+            </div>
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
-/* ============================================================================
-   8. SYSTEM SETTINGS MODULE
-   ============================================================================ */
-function SystemSettings() {
-  const [settings, setSettings] = useState({
-    systemName: 'NiceC WMS 智能仓储大掌柜',
-    defaultLang: 'zh-CN',
-    enableSlack: true,
-    enableEmail: true,
-    alertEmail: 'alerts@nicec.net',
-    slackWebhook: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX',
-    syncInterval: '30'
-  });
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
-    try {
-      const res = await api.get('/system-settings');
-      const data = Array.isArray(res) ? res : [];
-      const map: Record<string, string> = {};
-      for (const s of data) {
-        map[s.key] = s.value;
-      }
-      setSettings(prev => ({
-        ...prev,
-        systemName: map['wms_name'] || prev.systemName,
-        defaultLang: map['default_lang'] || prev.defaultLang,
-        enableSlack: map['enable_slack'] === 'true',
-        enableEmail: map['enable_email'] === 'true',
-        alertEmail: map['alert_email'] || prev.alertEmail,
-        slackWebhook: map['slack_webhook'] || prev.slackWebhook,
-        syncInterval: map['sync_interval'] || prev.syncInterval,
-      }));
-    } catch (err) {
-      console.error('Failed to load system settings', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const settingsPayload = [
-        { key: 'wms_name', value: settings.systemName },
-        { key: 'default_lang', value: settings.defaultLang },
-        { key: 'enable_slack', value: String(settings.enableSlack) },
-        { key: 'enable_email', value: String(settings.enableEmail) },
-        { key: 'alert_email', value: settings.alertEmail },
-        { key: 'slack_webhook', value: settings.slackWebhook },
-        { key: 'sync_interval', value: settings.syncInterval },
-      ];
-      await api.put('/system-settings', { settings: settingsPayload });
-      alert('系统设置已保存到数据库！');
-    } catch (err) {
-      alert('保存失败：' + (err instanceof Error ? err.message : 'Unknown error'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-5">
-      <div>
-        <h3 className="text-base font-bold text-slate-800">全局系统参数设定</h3>
-        <p className="text-xs text-slate-400 font-sans">配置 NiceC WMS 系统的对外显示名称、通知推送链路及自动轮询拉取频率</p>
-      </div>
-
-      <form onSubmit={handleSave} className="space-y-4 text-xs font-sans">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="md:col-span-2">
-            <label className="block text-[10px] font-bold text-slate-500 mb-1">系统门户主标题 Name</label>
-            <input
-              type="text"
-              value={settings.systemName}
-              onChange={e => setSettings(prev => ({ ...prev, systemName: e.target.value }))}
-              className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs font-bold"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-1">系统主语言 Language</label>
-            <select
-              value={settings.defaultLang}
-              onChange={e => setSettings(prev => ({ ...prev, defaultLang: e.target.value }))}
-              className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs"
-            >
-              <option value="zh-CN">中文简体 (zh-CN)</option>
-              <option value="en-US">English (en-US)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-1">前置包裹拉单自动同步周期 (分钟)</label>
-            <input
-              type="number"
-              value={settings.syncInterval}
-              onChange={e => setSettings(prev => ({ ...prev, syncInterval: e.target.value }))}
-              className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2.5 pt-3 border-t border-slate-100">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">前置预警与通知推送链路</span>
-          
-          <div className="flex flex-col gap-2">
-            <label className="flex items-center gap-2 select-none">
-              <input
-                type="checkbox"
-                checked={settings.enableSlack}
-                onChange={e => setSettings(prev => ({ ...prev, enableSlack: e.target.checked }))}
-                className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer h-3.5 w-3.5"
-              />
-              <span className="font-bold text-slate-700">推送包裹超时、出库卡面单异常警告到 Slack 频道</span>
-            </label>
-
-            {settings.enableSlack && (
-              <div className="pl-5.5">
-                <label className="block text-[10px] font-bold text-slate-400 mb-0.5">Slack Webhook URL</label>
-                <input
-                  type="text"
-                  value={settings.slackWebhook}
-                  onChange={e => setSettings(prev => ({ ...prev, slackWebhook: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1 text-xs font-mono text-slate-400 focus:text-slate-800"
-                />
+          {/* Bottom 3 columns */}
+          <div className="grid grid-cols-3 gap-3">
+            {/* 最新公告 */}
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+              <h4 className="text-sm font-bold text-slate-800 mb-3">最新公告</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs"><span>【NiceC WMS】7.1更新公告</span><span className="text-slate-400 shrink-0">2026-07-03</span></div>
+                <div className="flex justify-between text-xs"><span>【NiceC WMS】6.18更新公告</span><span className="text-slate-400 shrink-0">2026-06-18</span></div>
+                <div className="flex justify-between text-xs"><span>【NiceC WMS】6.11更新公告</span><span className="text-slate-400 shrink-0">2026-06-12</span></div>
               </div>
-            )}
+            </div>
 
-            <label className="flex items-center gap-2 select-none">
-              <input
-                type="checkbox"
-                checked={settings.enableEmail}
-                onChange={e => setSettings(prev => ({ ...prev, enableEmail: e.target.checked }))}
-                className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer h-3.5 w-3.5"
-              />
-              <span className="font-bold text-slate-700">每天自动打包异常清单和审计汇总发送到管理员邮箱</span>
-            </label>
-
-            {settings.enableEmail && (
-              <div className="pl-5.5">
-                <label className="block text-[10px] font-bold text-slate-400 mb-0.5">报警接收人 Email</label>
-                <input
-                  type="email"
-                  value={settings.alertEmail}
-                  onChange={e => setSettings(prev => ({ ...prev, alertEmail: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded px-2.5 py-1 text-xs font-mono"
-                />
+            {/* 库存 */}
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+              <h4 className="text-sm font-bold text-slate-800 mb-3">库存</h4>
+              <div className="flex items-baseline gap-2">
+                <span className="text-xs text-slate-400">在库总数</span>
+                <span className="text-xl font-bold text-slate-800">38,700</span>
               </div>
-            )}
-          </div>
-        </div>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-xs text-slate-400">可用SKU</span>
+                <span className="text-base font-bold text-slate-800">1,041</span>
+              </div>
+            </div>
 
-        <div className="flex justify-end pt-3 border-t border-slate-100">
-          <button
-            type="submit"
-            className="px-5 py-2 bg-[#062B66] hover:bg-[#062B66]/95 text-white font-bold rounded text-xs transition-all shadow-sm cursor-pointer"
-          >
-            保存全局参数设置
-          </button>
-        </div>
-      </form>
+            {/* 费用 */}
+            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-bold text-slate-800">费用</h4>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-500">CNY v</span>
+                  <span className="text-slate-400">2026-07-05 → 2026-07-08</span>
+                </div>
+              </div>
+              <div className="text-xs text-slate-400">业务费用 / 充值费用</div>
+              <div className="text-base font-bold text-slate-800 mt-1">0.0000 CNY</div>
+              <div className="flex gap-3 mt-2 text-xs">
+                <span className="text-red-500">同比 ↓100%</span>
+                <span className="text-red-500">环比 ↓100%</span>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
