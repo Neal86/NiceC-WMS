@@ -1,25 +1,72 @@
 {
   "users": [
     {
+      "id": "usr_admin_spec",
+      "username": "admin@nicecwms.com",
+      "email": "admin@nicecwms.com",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.wNckGajiZPNVGOz1H/3TwyGx/Hmne0S",
+      "role": "ADMIN",
+      "avatar": "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=faces"
+    },
+    {
+      "id": "usr_operator_spec",
+      "username": "warehouse@nicecwms.com",
+      "email": "warehouse@nicecwms.com",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.fUMWESMPNRsf.FyS3tnGynio7t16kP2",
+      "role": "WAREHOUSE_OPERATOR",
+      "warehouseId": "wh_1",
+      "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=faces"
+    },
+    {
+      "id": "usr_client_spec",
+      "username": "client@nicecwms.com",
+      "email": "client@nicecwms.com",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.vOK//hs/90I8sacb75bgt.SeeT8UqRa",
+      "role": "CLIENT",
+      "customerId": "cust_1",
+      "avatar": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=faces"
+    },
+    {
+      "id": "usr_client2_spec",
+      "username": "client2@nicecwms.com",
+      "email": "client2@nicecwms.com",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.vOK//hs/90I8sacb75bgt.SeeT8UqRa",
+      "role": "CLIENT",
+      "customerId": "cust_2",
+      "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=faces"
+    },
+    {
       "id": "usr_admin",
       "username": "admin@nicec.net",
       "email": "admin@nicec.net",
-      "role": "admin",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.wNckGajiZPNVGOz1H/3TwyGx/Hmne0S",
+      "role": "ADMIN",
       "avatar": "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=faces"
     },
     {
       "id": "usr_1",
       "username": "neal@nicec.net",
       "email": "neal@nicec.net",
-      "role": "admin",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.wNckGajiZPNVGOz1H/3TwyGx/Hmne0S",
+      "role": "ADMIN",
       "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces"
     },
     {
       "id": "usr_2",
       "username": "operator",
       "email": "operator@nicec.net",
-      "role": "operator",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.fUMWESMPNRsf.FyS3tnGynio7t16kP2",
+      "role": "WAREHOUSE_OPERATOR",
       "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=faces"
+    },
+    {
+      "id": "usr_client",
+      "username": "client@nicec.net",
+      "email": "client@nicec.net",
+      "passwordHash": "$2b$10$AaVwn6ItWGDhp51zPL/8R.vOK//hs/90I8sacb75bgt.SeeT8UqRa",
+      "role": "CLIENT",
+      "customerId": "cust_1",
+      "avatar": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=faces"
     }
   ],
   "customers": [

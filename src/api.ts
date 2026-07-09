@@ -35,19 +35,45 @@ api.interceptors.response.use(
 export const authApi = {
   login: async (username: string, password?: string) => {
     const response = await api.post('/auth/login', { username, password });
-    if (response.data.status === 'success' && response.data.user.token) {
-      localStorage.setItem('wms_token', response.data.user.token);
-      localStorage.setItem('wms_user', JSON.stringify(response.data.user));
+    const data = response.data;
+    if (data.status === 'success') {
+      // Normalize: token can be at data.token or data.user.token
+      const token = data.token || data.user?.token || '';
+      const user = data.user || {};
+      const userWithToken = { ...user, token };
+      localStorage.setItem('wms_token', token);
+      localStorage.setItem('wms_user', JSON.stringify(userWithToken));
+      return { status: 'success', user: userWithToken, token };
     }
-    return response.data;
+    return data;
   },
   logout: () => {
     localStorage.removeItem('wms_token');
     localStorage.removeItem('wms_user');
   },
   getCurrentUser: () => {
-    const userStr = localStorage.getItem('wms_user');
-    return userStr ? JSON.parse(userStr) : null;
+    try {
+      const token = localStorage.getItem('wms_token');
+      const userStr = localStorage.getItem('wms_user');
+      if (!token || !userStr) {
+        localStorage.removeItem('wms_token');
+        localStorage.removeItem('wms_user');
+        return null;
+      }
+      const user = JSON.parse(userStr);
+      if (!user || typeof user !== 'object') {
+        localStorage.removeItem('wms_token');
+        localStorage.removeItem('wms_user');
+        return null;
+      }
+      // Ensure token is attached
+      if (!user.token) user.token = token;
+      return user;
+    } catch {
+      localStorage.removeItem('wms_token');
+      localStorage.removeItem('wms_user');
+      return null;
+    }
   },
   refreshCurrentUser: async () => {
     const response = await api.get('/auth/me');

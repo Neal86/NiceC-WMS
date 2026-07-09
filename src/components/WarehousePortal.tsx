@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HelpCircle, Search } from 'lucide-react';
+import { HelpCircle, Search, LogOut } from 'lucide-react';
 
 interface WarehousePortalProps {
   currentUser: any;
@@ -81,8 +81,11 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
         <div className="flex-1" />
         <div className="flex items-center gap-3 text-xs px-4">
           <HelpCircle className="w-4 h-4 text-white/70" />
-          <span className="text-white/70">neal@nicec.net</span>
+          <span className="text-white/70">{currentUser?.email || currentUser?.username || 'user'}</span>
           <span className="text-white/70">NC - NO.1仓 - 92503</span>
+          <button onClick={onLogout} className="text-white/70 hover:text-white cursor-pointer ml-1" title="Logout">
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </header>
 

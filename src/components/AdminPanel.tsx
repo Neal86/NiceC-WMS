@@ -34,6 +34,22 @@ const chartValues = [2, 1.8, 1, 1, 1, 1, 1.2, 2, 1.5, 1, 1];
 export default function AdminPanel({ currentUser, onNavigateBack, initialPath = '/admin' }: AdminPanelProps) {
   const [activeSidebar, setActiveSidebar] = useState('首页');
 
+  // Access check
+  const role = String(currentUser?.role || '').toUpperCase();
+  if (!['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(role)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="bg-white p-8 rounded-lg shadow text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-2">Access Denied</h2>
+          <p className="text-slate-500 mb-4">You do not have permission to access the Admin Panel.</p>
+          <button onClick={onNavigateBack} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const chartPath = chartValues.map((v, i) => {
     const x = 40 + (i * 520) / (chartValues.length - 1);
     const y = 200 - (v / 2.2) * 170;
