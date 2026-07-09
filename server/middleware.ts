@@ -44,6 +44,33 @@ export function requireRole(...allowedRoles: string[]) {
   };
 }
 
+export function isAdminUser(user: any): boolean {
+  const role = String(user?.role || '').toUpperCase();
+  return role === 'ADMIN' || role === 'SUPER_ADMIN';
+}
+
+export function isClientUser(user: any): boolean {
+  const role = String(user?.role || '').toUpperCase();
+  return role === 'CLIENT' || role === 'CUSTOMER';
+}
+
+export function isWarehouseUser(user: any): boolean {
+  const role = String(user?.role || '').toUpperCase();
+  return role === 'WAREHOUSE' || role === 'WAREHOUSE_OPERATOR' || role === 'WAREHOUSE_MANAGER' || role === 'OPERATOR';
+}
+
+export function assertCustomerScope(user: any, customerId?: string): boolean {
+  if (isAdminUser(user)) return true;
+  if (isClientUser(user)) return !!user.customerId && (!customerId || user.customerId === customerId);
+  return true;
+}
+
+export function assertWarehouseScope(user: any, warehouseId?: string): boolean {
+  if (isAdminUser(user)) return true;
+  if (isWarehouseUser(user) && user.warehouseId) return !warehouseId || user.warehouseId === warehouseId;
+  return true;
+}
+
 export function requireCustomerAccess(req: any, res: any, next: any) {
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized. Please login first.' });
@@ -109,7 +136,7 @@ export function corsMiddleware() {
       res.setHeader('Access-Control-Allow-Origin', origin || '*');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id, X-API-Key');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     if (req.method === 'OPTIONS') {
       return res.status(204).end();

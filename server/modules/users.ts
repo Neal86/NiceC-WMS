@@ -4,6 +4,19 @@ import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
 import { requireAuth, requireRole } from '../middleware';
 
+const safeUserSelect = {
+  id: true,
+  username: true,
+  email: true,
+  name: true,
+  role: true,
+  customerId: true,
+  warehouseId: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true
+};
+
 export function registerUserRoutes(router: Router): void {
   router.get('/users', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
@@ -11,7 +24,7 @@ export function registerUserRoutes(router: Router): void {
       const prisma = getPrisma();
       try {
         const users = await prisma.user.findMany({
-          select: { id: true, username: true, email: true, role: true, customerId: true, warehouseId: true, status: true, createdAt: true, updatedAt: true }
+          select: safeUserSelect
         });
         return res.json(users);
       } catch (err) { console.error('Prisma users fetch error:', err); }
@@ -27,7 +40,7 @@ export function registerUserRoutes(router: Router): void {
       try {
         const user = await prisma.user.findUnique({
           where: { id: req.params.id },
-          select: { id: true, username: true, email: true, role: true, customerId: true, warehouseId: true, status: true, createdAt: true, updatedAt: true }
+          select: safeUserSelect
         });
         if (!user) return res.status(404).json({ error: 'User not found' });
         return res.json(user);
@@ -41,13 +54,26 @@ export function registerUserRoutes(router: Router): void {
 
   router.post('/users', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const { username, email, password, role, customerId, warehouseId } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'Username, email, and password are required' });
+    }
     const passwordHash = await bcrypt.hash(password, 10);
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const user = await prisma.user.create({ data: { username, email, passwordHash, role: role || 'WAREHOUSE_OPERATOR', customerId, warehouseId, status: 'ACTIVE' } });
+        const user = await prisma.user.create({
+          data: {
+            username,
+            email,
+            passwordHash,
+            role: role || 'WAREHOUSE_OPERATOR',
+            customerId: customerId || null,
+            warehouseId: warehouseId || null,
+            status: 'ACTIVE'
+          },
+          select: safeUserSelect
+        });
         return res.status(201).json(user);
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -55,12 +81,19 @@ export function registerUserRoutes(router: Router): void {
   });
 
   router.put('/users/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
-    const { email, role, customerId, warehouseId, status } = req.body;
+    const { email, name, role, customerId, warehouseId, status } = req.body;
+    const data: any = {};
+    if (email !== undefined) data.email = email;
+    if (name !== undefined) data.name = name;
+    if (role !== undefined) data.role = role;
+    if (customerId !== undefined) data.customerId = customerId || null;
+    if (warehouseId !== undefined) data.warehouseId = warehouseId || null;
+    if (status !== undefined) data.status = status;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const user = await prisma.user.update({ where: { id: req.params.id }, data: { email, role, customerId, warehouseId, status } });
+        const user = await prisma.user.update({ where: { id: req.params.id }, data, select: safeUserSelect });
         return res.json(user);
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -86,7 +119,7 @@ export function registerUserRoutes(router: Router): void {
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const user = await prisma.user.update({ where: { id: req.params.id }, data: { status }, select: { id: true, username: true, email: true, role: true, status: true } });
+        const user = await prisma.user.update({ where: { id: req.params.id }, data: { status }, select: safeUserSelect });
         return res.json({ status: 'success', user });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }

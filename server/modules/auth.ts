@@ -41,7 +41,16 @@ export function registerAuthRoutes(router: Router): void {
             );
             return res.json({
               status: 'success',
-              user: { id: dbUser.id, username: dbUser.username, email: dbUser.email, name: dbUser.username, role: dbUser.role, customerId: dbUser.customerId, warehouseId: dbUser.warehouseId, token }
+              user: {
+                id: dbUser.id,
+                username: dbUser.username,
+                email: dbUser.email,
+                name: dbUser.name || dbUser.username,
+                role: dbUser.role,
+                customerId: dbUser.customerId,
+                warehouseId: dbUser.warehouseId,
+                token
+              }
             });
           }
           return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
@@ -89,23 +98,35 @@ export function registerAuthRoutes(router: Router): void {
       );
       return res.json({
         status: 'success',
-        user: { id: u.id, name: u.username, email: u.email, role: u.role, customerId: u.customerId, warehouseId: u.warehouseId, token }
+        user: {
+          id: u.id,
+          username: u.username,
+          name: u.name || u.username,
+          email: u.email,
+          role: u.role,
+          customerId: u.customerId,
+          warehouseId: u.warehouseId,
+          token
+        }
       });
     }
 
     return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
   });
 
-  router.get('/auth/me', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Unauthorized: invalid or missing token' });
-    try {
-      const user = jwt.verify(token, JWT_SECRET);
-      return res.json(user);
-    } catch {
-      return res.status(401).json({ error: 'Unauthorized: invalid or missing token' });
-    }
+  router.get('/auth/me', requireAuth, (req: any, res) => {
+    return res.json({
+      status: 'success',
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        email: req.user.email,
+        name: req.user.name || req.user.username,
+        role: req.user.role,
+        customerId: req.user.customerId,
+        warehouseId: req.user.warehouseId
+      }
+    });
   });
 
   router.post('/auth/logout', (req, res) => {

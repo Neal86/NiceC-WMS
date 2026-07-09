@@ -66,8 +66,8 @@ async function main() {
   assert(dbHealth.res.ok, `GET /api/health/db failed: ${dbHealth.res.status}`);
   console.log('Health checks passed:', health.body, dbHealth.body);
 
-  const admin = await login('admin@nicec.net', 'admin123').catch(async () => login('neal@nicec.net', 'admin123'));
-  const client = await login('client@nicec.net', 'client123');
+  const admin = await login('admin@nicecwms.com', 'admin123456').catch(async () => login('admin@nicec.net', 'admin123').catch(() => login('neal@nicec.net', 'admin123')));
+  const client = await login('client@nicecwms.com', 'client123456').catch(async () => login('client@nicec.net', 'client123'));
 
   const wrong = await request('/api/auth/login', {
     method: 'POST',

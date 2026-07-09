@@ -453,6 +453,9 @@ export function registerOutboundRoutes(router: Router): void {
 
   router.post('/outbound-orders/:id/ship', requireAuth, async (req: any, res) => {
     const user = req.user;
+    if (isClient(user)) {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role cannot ship orders.' });
+    }
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -467,9 +470,25 @@ export function registerOutboundRoutes(router: Router): void {
           const reservations = await tx.inventoryReservation.findMany({ where: { orderId: order.id, status: 'ACTIVE' } });
           for (const resv of reservations) {
             const inv = await tx.inventory.findFirst({ where: { skuId: resv.skuId, warehouseId: resv.warehouseId } });
-            if (inv) { await tx.inventory.update({ where: { id: inv.id }, data: { reservedQty: Math.max(0, inv.reservedQty - resv.quantity) } }); }
+            if (inv) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: {
+                  reservedQty: Math.max(0, inv.reservedQty - resv.quantity),
+                  onHand: Math.max(0, (inv.onHand || 0) - resv.quantity)
+                }
+              });
+            }
             await tx.inventoryReservation.update({ where: { id: resv.id }, data: { status: 'CONSUMED' } });
-            await tx.inventoryTransaction.create({ data: { customerId: resv.customerId, warehouseId: resv.warehouseId, skuId: resv.skuId, skuCode: resv.skuCode, type: 'SHIP', direction: 'OUT', quantity: resv.quantity, beforeQty: inv ? inv.availableQty + inv.reservedQty : 0, afterQty: inv ? inv.availableQty + inv.reservedQty - resv.quantity : 0, reason: `Outbound Order ${order.id} Shipped` } });
+            await tx.inventoryTransaction.create({
+              data: {
+                customerId: resv.customerId, warehouseId: resv.warehouseId, skuId: resv.skuId, skuCode: resv.skuCode,
+                type: 'SHIP', direction: 'OUT', quantity: resv.quantity,
+                beforeQty: inv ? (inv.onHand || 0) : 0,
+                afterQty: inv ? Math.max(0, (inv.onHand || 0) - resv.quantity) : 0,
+                reason: `Outbound Order ${order.id} Shipped`
+              }
+            });
           }
           return await tx.outboundOrder.update({ where: { id: order.id }, data: { status: 'SHIPPED' } });
         });
@@ -500,7 +519,10 @@ export function registerOutboundRoutes(router: Router): void {
     res.json({ status: 'success', message: '面单打印状态更新成功', labelUrl: `https://mockpdf.wms.nicec.net/labels/${ord.orderNo}.pdf` });
   });
 
-  router.post('/outbound-orders/:id/mark-label-printed', requireAuth, (req, res) => {
+  router.post('/outbound-orders/:id/mark-label-printed', requireAuth, (req: any, res) => {
+    if (isClient(req.user)) {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role is not permitted for this warehouse operation.' });
+    }
     const db = getDB();
     const ord = db.outboundOrders.find(o => o.id === req.params.id);
     if (!ord) return res.status(404).json({ error: 'Order not found' });
@@ -509,7 +531,10 @@ export function registerOutboundRoutes(router: Router): void {
     res.json({ status: 'success', order: ord });
   });
 
-  router.post('/outbound-orders/batch-print-pick-list', requireAuth, (req, res) => {
+  router.post('/outbound-orders/batch-print-pick-list', requireAuth, (req: any, res) => {
+    if (isClient(req.user)) {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role is not permitted for this warehouse operation.' });
+    }
     const { orderIds } = req.body;
     res.json({ status: 'success', message: `批量打印发货清单任务成功发送，包含 ${orderIds?.length || 0} 个出库单。` });
   });
@@ -519,6 +544,9 @@ export function registerOutboundRoutes(router: Router): void {
   });
 
   router.post('/outbound-orders/:id/pick', requireAuth, async (req: any, res) => {
+    if (isClient(req.user)) {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role is not permitted for this warehouse operation.' });
+    }
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -535,6 +563,9 @@ export function registerOutboundRoutes(router: Router): void {
   });
 
   router.post('/outbound-orders/:id/pack', requireAuth, async (req: any, res) => {
+    if (isClient(req.user)) {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role is not permitted for this warehouse operation.' });
+    }
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -553,6 +584,9 @@ export function registerOutboundRoutes(router: Router): void {
   });
 
   router.post('/outbound-orders/:id/weigh-package', requireAuth, async (req: any, res) => {
+    if (isClient(req.user)) {
+      return res.status(403).json({ error: 'Forbidden: CLIENT role is not permitted for this warehouse operation.' });
+    }
     const { weight, length, width, height } = req.body;
     const parsedWeight = parseFloat(weight || 0);
     if (parsedWeight <= 0) return res.status(400).json({ error: 'Weight must be greater than 0' });

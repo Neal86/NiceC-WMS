@@ -3,17 +3,18 @@ import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
 import { getWebSocket } from '../websocket';
 import { resolveWarehouseId } from './warehouse';
-import { requireAuth } from '../middleware';
+import { requireAuth, isClientUser, isWarehouseUser, assertCustomerScope, assertWarehouseScope } from '../middleware';
 
 export function registerInboundRoutes(router: Router): void {
   router.get('/inbound-orders', requireAuth, async (req: any, res) => {
     const user = req.user;
-    const isClient = (user.role || '').toUpperCase() === 'CLIENT';
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const where = isClient && user.customerId ? { customerId: user.customerId } : {};
+        const where: any = {};
+        if (isClientUser(user) && user.customerId) where.customerId = user.customerId;
+        if (isWarehouseUser(user) && user.warehouseId) where.warehouseId = user.warehouseId;
         const orders = await prisma.inboundOrder.findMany({
           where, include: { items: true, customer: true }, orderBy: { createdAt: 'desc' }
         });
@@ -34,6 +35,12 @@ export function registerInboundRoutes(router: Router): void {
           where: { id: req.params.id }, include: { items: true, customer: true }
         });
         if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        if (isClientUser(req.user) && req.user.customerId && order.customerId !== req.user.customerId) {
+          return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        }
+        if (isWarehouseUser(req.user) && req.user.warehouseId && order.warehouseId !== req.user.warehouseId) {
+          return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+        }
         return res.json(order);
       } catch (err) {
         console.error('Prisma inbound order fetch error:', err);
@@ -43,10 +50,14 @@ export function registerInboundRoutes(router: Router): void {
   });
 
   router.post('/inbound-orders', requireAuth, async (req: any, res) => {
-    const user = req.user;
     const { items = [], warehouseId: bodyWhId, remark = '-' } = req.body;
-    const warehouseId = bodyWhId || resolveWarehouseId(req.user, 'wh_default');
-    const customerId = user.customerId || req.body.customerId || 'cust_1';
+    const warehouseId = req.user.warehouseId || bodyWhId;
+    const customerId = req.user.customerId || req.body.customerId;
+    if (!customerId) return res.status(400).json({ error: 'customerId is required' });
+    if (!warehouseId) return res.status(400).json({ error: 'warehouseId is required' });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items are required' });
+    if (!assertCustomerScope(req.user, customerId)) return res.status(403).json({ error: 'Forbidden. Customer access denied.' });
+    if (!assertWarehouseScope(req.user, warehouseId)) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
     const orderNo = 'ASN' + String(Date.now()).substring(3, 15);
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -97,7 +108,7 @@ export function registerInboundRoutes(router: Router): void {
   });
 
   router.post('/inbound-orders/:id/receive', requireAuth, async (req: any, res) => {
-    const { receivedItems = [] } = req.body;
+    const receivedItems = req.body.receivedItems || req.body.items || [];
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -119,10 +130,24 @@ export function registerInboundRoutes(router: Router): void {
               let inv = await tx.inventory.findFirst({
                 where: { skuId: item.skuId, warehouseId: order.warehouseId }
               });
+              const beforeOnHand = inv ? (inv.onHand || 0) : 0;
               if (inv) {
-                await tx.inventory.update({
+                inv = await tx.inventory.update({
                   where: { id: inv.id },
-                  data: { availableQty: inv.availableQty + item.qtyReceived }
+                  data: { onHand: beforeOnHand + item.qtyReceived }
+                });
+              } else {
+                inv = await tx.inventory.create({
+                  data: {
+                    customerId: order.customerId,
+                    warehouseId: order.warehouseId,
+                    skuId: item.skuId,
+                    skuCode: orderItem.skuCode,
+                    onHand: item.qtyReceived,
+                    availableQty: 0,
+                    reservedQty: 0,
+                    damagedQty: 0
+                  }
                 });
               }
               await tx.inventoryTransaction.create({
@@ -130,13 +155,14 @@ export function registerInboundRoutes(router: Router): void {
                   customerId: order.customerId, warehouseId: order.warehouseId,
                   skuId: item.skuId, skuCode: orderItem.skuCode,
                   type: 'INBOUND_RECEIVED', direction: 'IN',
-                  quantity: item.qtyReceived, beforeQty: inv ? inv.availableQty : 0,
-                  afterQty: inv ? inv.availableQty + item.qtyReceived : item.qtyReceived,
+                  quantity: item.qtyReceived,
+                  beforeQty: beforeOnHand,
+                  afterQty: beforeOnHand + item.qtyReceived,
                   reason: `ASN ${order.orderNo} Received`
                 }
               });
 
-              const paNo = 'PA' + String(Date.now()).substring(3, 15);
+              const paNo = 'PA' + String(Date.now()).substring(3, 15) + '_' + Math.random().toString(36).slice(2, 6);
               await tx.putawayTask.create({
                 data: {
                   taskNo: paNo, inboundOrderId: order.id, skuId: item.skuId,
@@ -170,16 +196,22 @@ export function registerInboundRoutes(router: Router): void {
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const tasks = await prisma.putawayTask.findMany({ where: { inboundOrderId: req.params.id, status: 'PENDING' } });
-        for (const task of tasks) {
-          await prisma.putawayTask.update({ where: { id: task.id }, data: { status: 'COMPLETED', operatorId: req.user?.id } });
-          const inv = await prisma.inventory.findFirst({ where: { skuId: task.skuId, warehouseId: task.warehouseId } });
-          if (inv) {
-            await prisma.inventory.update({ where: { id: inv.id }, data: { availableQty: inv.availableQty + task.quantity } });
+        const result = await prisma.$transaction(async (tx) => {
+          const tasks = await tx.putawayTask.findMany({ where: { inboundOrderId: req.params.id, status: 'PENDING' } });
+          for (const task of tasks) {
+            await tx.putawayTask.update({ where: { id: task.id }, data: { status: 'COMPLETED', operatorId: req.user?.id } });
+            const inv = await tx.inventory.findFirst({ where: { skuId: task.skuId, warehouseId: task.warehouseId } });
+            if (inv) {
+              await tx.inventory.update({
+                where: { id: inv.id },
+                data: { availableQty: inv.availableQty + task.quantity }
+              });
+            }
           }
-        }
-        await prisma.inboundOrder.update({ where: { id: req.params.id }, data: { status: 'COMPLETED' } });
-        return res.json({ status: 'success', message: 'Putaway completed', tasksCompleted: tasks.length });
+          await tx.inboundOrder.update({ where: { id: req.params.id }, data: { status: 'COMPLETED' } });
+          return tasks.length;
+        });
+        return res.json({ status: 'success', message: 'Putaway completed', tasksCompleted: result });
       } catch (err: any) {
         return res.status(400).json({ error: err.message });
       }
