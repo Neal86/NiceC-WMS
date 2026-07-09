@@ -36,24 +36,25 @@ const mockOrders: WorkOrder[] = [
 ];
 
 const sidebarMenu = [
-  { label: '首页', children: false },
-  { label: '入库', children: true, subs: ['到仓扫描', '入库管理', '上架管理', '新品维护', '入库认领'] },
-  { label: '出库', children: false },
-  { label: '退件', children: false },
-  { label: '转运', children: false },
-  { label: '工单', children: false },
-  { label: '报表', children: false },
-  { label: 'FBA退货', children: false },
-  { label: '库内', children: false },
-  { label: '基础数据', children: false },
+  { label: 'Dashboard', children: false },
+  { label: 'Receiving', children: true, subs: ['Arrival Scan', 'Receiving Manage', 'Putaway', 'New Item Setup', 'Claim'] },
+  { label: 'Picking', children: false },
+  { label: 'Packing', children: false },
+  { label: 'Weighing', children: false },
+  { label: 'Review', children: false },
+  { label: 'Shipping', children: false },
+  { label: 'Returns', children: false },
+  { label: 'Relabel', children: false },
+  { label: 'Transfers', children: false },
+  { label: 'Exceptions', children: false },
 ];
 
-const statusTabs = ['全部', '待审核 (47)', '已审核 (2)', '处理完成', '已作废'];
+const statusTabs = ['All', 'Pending Review (47)', 'Approved (2)', 'Completed', 'Cancelled'];
 
 export default function WarehousePortal({ currentUser, onLogout }: WarehousePortalProps) {
-  const [activeSidebar, setActiveSidebar] = useState('工单');
-  const [expandedMenu, setExpandedMenu] = useState<string>('入库');
-  const [activeStatusTab, setActiveStatusTab] = useState('待审核 (47)');
+  const [activeSidebar, setActiveSidebar] = useState('Dashboard');
+  const [expandedMenu, setExpandedMenu] = useState<string>('');
+  const [activeStatusTab, setActiveStatusTab] = useState('Pending Review (47)');
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = 3;
   const totalItems = 47;
@@ -73,16 +74,17 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
         </div>
-        <div className="flex items-center h-full ml-6 gap-1">
-          <div className="text-white/80 px-5 h-12 flex items-center text-xs">首页</div>
-          <div className="text-white/80 px-5 h-12 flex items-center text-xs">一件代发出库详情</div>
-          <div className="bg-white text-slate-900 rounded-t-md px-8 h-12 flex items-center text-xs font-medium">工单</div>
+        <div className="flex items-center h-full ml-2 gap-1">
+          <div className="bg-white text-slate-900 rounded-t-md px-6 h-12 flex items-center text-xs font-medium">Work Orders</div>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-3 text-xs px-4">
           <HelpCircle className="w-4 h-4 text-white/70" />
-          <span className="text-white/70">{currentUser?.email || currentUser?.username || 'user'}</span>
-          <span className="text-white/70">NC - NO.1仓 - 92503</span>
+          <span className="text-white/80 font-medium">{currentUser?.email || currentUser?.username || 'user'}</span>
+          <span className="text-white/50">|</span>
+          <span className="text-white/60">WH-NO1-92503</span>
+          <span className="text-white/50">|</span>
+          <span className="text-white/60">OPERATOR</span>
           <button onClick={onLogout} className="text-white/70 hover:text-white cursor-pointer ml-1" title="Logout">
             <LogOut className="w-4 h-4" />
           </button>
@@ -92,7 +94,7 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-[136px] bg-[#071226] shrink-0 overflow-y-auto">
+        <aside className="w-[150px] bg-[#071226] shrink-0 overflow-y-auto">
           <nav className="py-2">
             {sidebarMenu.map((item) => {
               const isActive = activeSidebar === item.label;
@@ -104,13 +106,13 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
                       setActiveSidebar(item.label);
                       if (item.children) toggleExpand(item.label);
                     }}
-                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between ${
-                      isActive ? 'bg-blue-600 text-white rounded mx-1 px-3' : 'text-slate-300 hover:bg-slate-800'
-                    }`}
+                    className={`w-full text-left py-2.5 text-xs flex items-center justify-between ${
+                      isActive ? 'bg-blue-600 text-white font-medium border-r-2 border-blue-300' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    } ${isActive ? 'px-3' : 'px-4'}`}
                   >
-                    <span>{item.label}</span>
+                    <span className="truncate">{item.label}</span>
                     {item.children && (
-                      <svg className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                      <svg className={`w-3 h-3 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                     )}
                   </button>
                   {item.children && isExpanded && item.subs && (
@@ -156,37 +158,38 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
           {/* Filters */}
           <div className="h-[54px] border-b border-slate-200 flex items-center gap-2 px-3 shrink-0 flex-wrap">
             <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
-              <option>客户名称/代码</option>
+              <option>Customer</option>
             </select>
             <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
-              <option>工单类型</option>
+              <option>Work Order Type</option>
             </select>
             <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
-              <option>紧急程度</option>
+              <option>Priority</option>
             </select>
             <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
-              <option>回复状态</option>
+              <option>Reply Status</option>
             </select>
             <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
-              <option>附件</option>
+              <option>Attachments</option>
             </select>
             <div className="relative">
-              <input placeholder="工单标题" className="h-8 text-xs border border-slate-200 rounded pl-2 pr-7 bg-white text-slate-600 w-[140px]" />
+              <input placeholder="Search title..." className="h-8 text-xs border border-slate-200 rounded pl-2 pr-7 bg-white text-slate-600 w-[140px]" />
               <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2" />
             </div>
             <select className="h-8 text-xs border border-slate-200 rounded px-2 bg-white text-slate-600">
-              <option>创建时间</option>
+              <option>Created</option>
             </select>
             <span className="text-xs text-slate-500 whitespace-nowrap">2026-04-08 → 2026-07-09</span>
-            <button className="h-8 px-3 text-xs text-blue-600 border border-blue-200 rounded hover:bg-blue-50">重置</button>
+            <button className="h-8 px-3 text-xs text-blue-600 border border-blue-200 rounded hover:bg-blue-50">Reset</button>
           </div>
 
           {/* Action bar */}
           <div className="h-[52px] bg-slate-50 border-b border-slate-200 flex items-center justify-between px-3 shrink-0">
             <div className="flex items-center gap-2">
-              <button className="h-8 px-4 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">工单类型管理</button>
-              <button className="h-8 px-3 text-xs bg-white border border-slate-200 rounded text-slate-600">导出 v</button>
+              <button className="h-8 px-4 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">Manage Types</button>
+              <button className="h-8 px-3 text-xs bg-white border border-slate-200 rounded text-slate-600">Export</button>
             </div>
+            <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">Demo Data</span>
             <button className="text-slate-400 hover:text-slate-600">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             </button>
@@ -198,13 +201,13 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
                   <th className="w-10 px-3 py-3 text-left"><input type="checkbox" className="rounded" /></th>
-                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">工单号</th>
-                  <th className="w-[360px] px-3 py-3 text-left font-medium text-slate-500">工单标题</th>
-                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">紧急程度</th>
-                  <th className="w-[280px] px-3 py-3 text-left font-medium text-slate-500">客户</th>
-                  <th className="w-[200px] px-3 py-3 text-left font-medium text-slate-500">工单类型</th>
-                  <th className="w-[180px] px-3 py-3 text-left font-medium text-slate-500">创建时间</th>
-                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">操作</th>
+                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">Order No.</th>
+                  <th className="w-[360px] px-3 py-3 text-left font-medium text-slate-500">Title</th>
+                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">Priority</th>
+                  <th className="w-[280px] px-3 py-3 text-left font-medium text-slate-500">Customer</th>
+                  <th className="w-[200px] px-3 py-3 text-left font-medium text-slate-500">Type</th>
+                  <th className="w-[180px] px-3 py-3 text-left font-medium text-slate-500">Created</th>
+                  <th className="w-[120px] px-3 py-3 text-left font-medium text-slate-500">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,12 +222,12 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
                     </td>
                     <td className="px-3 py-3 text-slate-700">{order.title}</td>
                     <td className="px-3 py-3">
-                      <span className={`${order.priority === '紧急' ? 'text-red-500' : 'text-slate-500'}`}>{order.priority}</span>
+                      <span className={`${order.priority === '紧急' ? 'text-red-500' : 'text-slate-500'}`}>{order.priority === '紧急' ? 'Urgent' : 'Normal'}</span>
                     </td>
                     <td className="px-3 py-3 text-slate-600">{order.customer}</td>
                     <td className="px-3 py-3 text-slate-600">{order.type}</td>
                     <td className="px-3 py-3 text-slate-500">{order.createdAt}</td>
-                    <td className="px-3 py-3"><span className="text-blue-600 cursor-pointer hover:underline">审核</span></td>
+                    <td className="px-3 py-3"><span className="text-blue-600 cursor-pointer hover:underline">Review</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -233,7 +236,7 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
 
           {/* Pagination */}
           <div className="h-12 border-t border-slate-200 flex items-center justify-end px-4 gap-3 text-xs text-slate-500 shrink-0 bg-white">
-            <span>共{totalItems}条</span>
+            <span>{totalItems} items</span>
             <div className="flex items-center gap-1">
               <button className="px-2 py-1 rounded hover:bg-slate-100">&lt;</button>
               {[1, 2, 3].map((p) => (
@@ -247,9 +250,9 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
               ))}
               <button className="px-2 py-1 rounded hover:bg-slate-100">&gt;</button>
             </div>
-            <span>20条/页</span>
+            <span>20 / page</span>
             <div className="flex items-center gap-1">
-              <span>前往</span>
+              <span>Go to</span>
               <input className="w-8 h-6 border border-slate-200 rounded text-center text-xs" defaultValue={1} />
             </div>
           </div>
