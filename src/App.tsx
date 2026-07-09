@@ -51,7 +51,7 @@ export default function App() {
   }
 
   // Warehouse role
-  if (role === 'WAREHOUSE_OPERATOR' || role === 'OPERATOR') {
+  if (role === 'WAREHOUSE_OPERATOR' || role === 'OPERATOR' || role === 'WAREHOUSE' || role === 'WAREHOUSE_MANAGER') {
     return <WarehousePortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 

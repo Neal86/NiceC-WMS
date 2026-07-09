@@ -3,7 +3,7 @@ import { Home, Users, Globe, Package, Truck, Warehouse, Settings, DollarSign, Ch
 
 interface AdminPanelProps {
   currentUser: any;
-  onNavigateBack: () => void;
+  onNavigateBack?: () => void;
   onLogout: () => void;
   initialPath?: string;
 }
