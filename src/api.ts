@@ -352,6 +352,8 @@ export const dashboardApi = {
   }
 };
 
+// TODO: Backend has operationLogs in db.ts but no /operation-logs route registered yet.
+// Callers should handle 404 gracefully and show fallback/placeholder.
 export const logApi = {
   getOperationLogs: async () => {
     const response = await api.get('/operation-logs');
