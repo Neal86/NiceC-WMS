@@ -44,18 +44,19 @@ export default function App() {
   }
 
   const role = String(currentUser.role || '').toUpperCase();
+  const isInternalRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'WAREHOUSE_MANAGER', 'WAREHOUSE_OPERATOR', 'OPERATOR', 'WAREHOUSE'].includes(role);
 
-  // Client role
+  // Client role - isolated, no switching
   if (role === 'CLIENT') {
     return <ClientPortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 
-  // Warehouse role
-  if (role === 'WAREHOUSE_OPERATOR' || role === 'OPERATOR' || role === 'WAREHOUSE' || role === 'WAREHOUSE_MANAGER') {
+  // Internal roles: check currentPath to support switching between /admin and /warehouse
+  if (currentPath.startsWith('/warehouse')) {
     return <WarehousePortal currentUser={currentUser} onLogout={handleLogout} onNavigate={handleNavigate} />;
   }
 
-  // Admin / Manager role
+  // Default to AdminPanel for all internal roles (includes /admin path)
   return (
     <AdminPanel
       currentUser={currentUser}
