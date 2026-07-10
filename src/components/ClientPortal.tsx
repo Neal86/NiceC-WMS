@@ -1,447 +1,62 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { HelpCircle, LogOut } from 'lucide-react';
-import {
-  outboundApi,
-  inventoryApi,
-  inboundApi,
-  returnApi,
-  billingApi,
-  apiKeyApi,
-  webhookApi,
-  storeConnectionApi,
-} from '../api';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import ClientPortalLayout from './client/ClientPortalLayout';
+import Dashboard from './client/pages/Dashboard';
+import PlatformOrders from './client/pages/PlatformOrders';
+import { InboundPage, DropshipPage, TransferPage, InboundClaimPage, DefectivePage, WorkOrderPage } from './client/pages/WarehousePages';
+import { ReturnsPage, TransshipmentPage } from './client/pages/ReturnsTransshipment';
+import { FBAReturnInboundPage, FBAReturnRelabelPage, FBAReturnOutboundPage } from './client/pages/FBAReturns';
+import { ProductInventoryPage, CartonInventoryPage, ReturnInventoryPage, CombinedInventoryPage, ProductAgingPage, CartonAgingPage, ReturnAgingPage } from './client/pages/InventoryPages';
+import ProductManagement from './client/pages/ProductManagement';
+import Analytics from './client/pages/Analytics';
+import { MyAccount, TransactionsPage } from './client/pages/AccountPages';
+import { PlatformAuthPage, OrderRulesPage, ProductMappingPage } from './client/pages/SettingsPages';
+import { ClientAccountsPage, ClientRolesPage, AddressBookPage, LoginLogsPage, UnitsPage } from './client/pages/SettingsPages2';
 
 interface ClientPortalProps {
-  currentUser: {
-    id: string;
-    username: string;
-    email: string;
-    role: string;
-    customerId?: string;
-    avatar?: string;
-  };
+  currentUser: { id: string; username: string; email: string; role: string; customerId?: string; avatar?: string };
   onLogout: () => void;
 }
 
-const sidebarItems = [
-  'Dashboard', 'Orders', 'Inventory', 'Inbound', 'Returns',
-  'Billing', 'Invoices', 'API Keys', 'Webhooks', 'Store Connections', 'Support'
-];
-
-const asArray = <T,>(value: any): T[] => {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value?.data)) return value.data;
-  if (Array.isArray(value?.items)) return value.items;
-  if (Array.isArray(value?.orders)) return value.orders;
-  if (Array.isArray(value?.results)) return value.results;
-  return [];
-};
-
-const belongsToCustomer = (item: any, customerId?: string) => {
-  if (!customerId) return true;
-  return !item?.customerId || item.customerId === customerId;
-};
-
-const isPending = (item: any) => {
-  const status = String(item?.status || item?.state || '').toUpperCase();
-  return ['PENDING', 'NEW', 'CREATED', 'RECEIVING', 'PICKING', 'REVIEW', 'REVIEWS'].includes(status);
-};
-
-const getDisplayValue = (item: any, keys: string[]) => {
-  for (const key of keys) {
-    const value = item?.[key];
-    if (value !== undefined && value !== null && value !== '') return String(value);
-  }
-  return '-';
-};
-
-const CompactDataTable = ({ title, rows }: { title: string; rows: any[] }) => (
-  <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
-    <h3 className="text-sm font-bold text-slate-800 mb-3">{title}</h3>
-    {rows.length === 0 ? (
-      <div className="text-xs text-slate-400 py-8 text-center">No data found.</div>
-    ) : (
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-slate-100 text-slate-400">
-              <th className="text-left py-2 pr-3">ID</th>
-              <th className="text-left py-2 pr-3">Name / No.</th>
-              <th className="text-left py-2 pr-3">Status</th>
-              <th className="text-left py-2 pr-3">Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.slice(0, 80).map((row, index) => (
-              <tr key={String(row.id || row.orderNo || row.code || index)} className="border-b border-slate-50 hover:bg-slate-50">
-                <td className="py-2 pr-3 text-slate-500">{getDisplayValue(row, ['id', 'code'])}</td>
-                <td className="py-2 pr-3 text-slate-700">{getDisplayValue(row, ['name', 'username', 'email', 'orderNo', 'skuCode', 'code', 'title'])}</td>
-                <td className="py-2 pr-3 text-slate-500">{getDisplayValue(row, ['status', 'role', 'state'])}</td>
-                <td className="py-2 pr-3 text-slate-400">{getDisplayValue(row, ['updatedAt', 'createdAt', 'createdTime'])}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )}
-  </div>
-);
-
 export default function ClientPortal({ currentUser, onLogout }: ClientPortalProps) {
-  const [activeSidebar, setActiveSidebar] = useState('Dashboard');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [updatedAt, setUpdatedAt] = useState('');
-  const [data, setData] = useState({
-    outbound: [] as any[],
-    inventory: [] as any[],
-    inbound: [] as any[],
-    returns: [] as any[],
-    billingRecords: [] as any[],
-    invoices: [] as any[],
-    apiKeys: [] as any[],
-    webhooks: [] as any[],
-    storeConnections: [] as any[],
-  });
-
-  useEffect(() => {
-    let mounted = true;
-
-    const safe = async (fn: () => Promise<any>) => {
-      try {
-        return await fn();
-      } catch (err) {
-        console.warn('Client portal API failed:', err);
-        return [];
-      }
-    };
-
-    const load = async () => {
-      setLoading(true);
-      setError('');
-
-      const customerId = currentUser.customerId;
-      const params = customerId ? { customerId, pageSize: 200 } : { pageSize: 200 };
-
-      const [
-        outbound,
-        inventory,
-        inbound,
-        returns,
-        billingRecords,
-        invoices,
-        apiKeys,
-        webhooks,
-        storeConnections,
-      ] = await Promise.all([
-        safe(() => outboundApi.getOrders(params as any)),
-        safe(() => inventoryApi.getInventory()),
-        safe(() => inboundApi.getOrders(params)),
-        safe(() => returnApi.getReturns(params)),
-        safe(() => billingApi.getRecords()),
-        safe(() => billingApi.getInvoices()),
-        safe(() => apiKeyApi.getKeys()),
-        safe(() => webhookApi.getWebhooks()),
-        safe(() => storeConnectionApi.getConnections()),
-      ]);
-
-      if (!mounted) return;
-
-      const filterCustomer = (rows: any[]) => rows.filter((row) => belongsToCustomer(row, customerId));
-
-      setData({
-        outbound: filterCustomer(asArray(outbound)),
-        inventory: filterCustomer(asArray(inventory)),
-        inbound: filterCustomer(asArray(inbound)),
-        returns: filterCustomer(asArray(returns)),
-        billingRecords: filterCustomer(asArray(billingRecords)),
-        invoices: filterCustomer(asArray(invoices)),
-        apiKeys: filterCustomer(asArray(apiKeys)),
-        webhooks: filterCustomer(asArray(webhooks)),
-        storeConnections: filterCustomer(asArray(storeConnections)),
-      });
-
-      setUpdatedAt(new Date().toLocaleString());
-      setLoading(false);
-    };
-
-    load().catch((err) => {
-      if (!mounted) return;
-      console.error(err);
-      setError('Failed to load client data.');
-      setLoading(false);
-    });
-
-    return () => {
-      mounted = false;
-    };
-  }, [currentUser.customerId]);
-
-  const stats = useMemo(() => {
-    const totalStock = data.inventory.reduce((sum, item) => sum + Number(item.availableQty || item.qty || 0), 0);
-    const activeSkus = new Set(data.inventory.map((item) => item.skuId || item.skuCode).filter(Boolean)).size;
-    const balance = data.billingRecords.reduce((sum, item) => sum + Number(item.amount || item.total || 0), 0);
-
-    return {
-      pendingInbound: data.inbound.filter(isPending).length,
-      outboundTotal: data.outbound.length,
-      returnPending: data.returns.filter(isPending).length,
-      inventoryTotal: totalStock,
-      activeSkus,
-      invoices: data.invoices.length,
-      apiKeys: data.apiKeys.length,
-      webhooks: data.webhooks.length,
-      storeConnections: data.storeConnections.length,
-      balance,
-    };
-  }, [data]);
-
-  const renderSection = () => {
-    if (activeSidebar === 'Dashboard') return null;
-
-    if (activeSidebar === 'Orders') return <CompactDataTable title="Orders" rows={data.outbound} />;
-    if (activeSidebar === 'Inventory') return <CompactDataTable title="Inventory" rows={data.inventory} />;
-    if (activeSidebar === 'Inbound') return <CompactDataTable title="Inbound" rows={data.inbound} />;
-    if (activeSidebar === 'Returns') return <CompactDataTable title="Returns" rows={data.returns} />;
-    if (activeSidebar === 'Billing') return <CompactDataTable title="Billing" rows={data.billingRecords} />;
-    if (activeSidebar === 'Invoices') return <CompactDataTable title="Invoices" rows={data.invoices} />;
-    if (activeSidebar === 'API Keys') return <CompactDataTable title="API Keys" rows={data.apiKeys} />;
-    if (activeSidebar === 'Webhooks') return <CompactDataTable title="Webhooks" rows={data.webhooks} />;
-    if (activeSidebar === 'Store Connections') return <CompactDataTable title="Store Connections" rows={data.storeConnections} />;
-
-    return (
-      <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
-        <h3 className="text-sm font-bold text-slate-800 mb-2">{activeSidebar}</h3>
-        <p className="text-xs text-slate-400">This module is available.</p>
-      </div>
-    );
-  };
-
   return (
-    <div className="min-h-screen w-full bg-slate-100 flex flex-col font-sans">
-      {/* Header */}
-      <header className="h-12 bg-[#001b44] text-white flex items-center justify-between px-3 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">NC</div>
-          <span className="text-sm font-bold">NiceC Client Portal</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="bg-white text-slate-800 text-xs px-6 h-12 flex items-center rounded-t-md font-medium">Dashboard</div>
-        </div>
-        <div className="flex items-center gap-3 text-xs">
-          <button className="text-white/70 hover:text-white cursor-pointer"><HelpCircle className="w-4 h-4" /></button>
-          <div className="w-6 h-6 rounded-full bg-blue-300 flex items-center justify-center text-xs text-white font-bold">
-            {currentUser.username?.charAt(0).toUpperCase() || 'U'}
-          </div>
-          <span className="text-white/80">{currentUser.email}</span>
-          <span className="text-white/50">|</span>
-          <span className="text-white/60">CLIENT</span>
-          <span className="text-white/50">|</span>
-          <span className="text-white/60 max-w-[160px] truncate">{currentUser.customerId || 'Client Account'}</span>
-          <button onClick={onLogout} className="text-white/70 hover:text-white cursor-pointer ml-1" title="Logout">
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
-
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-[170px] bg-white shrink-0 border-r border-slate-200 overflow-y-auto">
-          <nav className="py-2">
-            {sidebarItems.map((item) => {
-              const isActive = activeSidebar === item;
-              return (
-                <button
-                  key={item}
-                  onClick={() => setActiveSidebar(item)}
-                  className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between ${
-                    isActive
-                      ? 'bg-blue-50 text-blue-600 border-r-2 border-blue-600 font-medium'
-                      : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="truncate">{item}</span>
-                  {item !== 'Dashboard' && <span className="text-slate-300 text-[10px] shrink-0">&gt;</span>}
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
-
-        {/* Main Content */}
-        <main className="flex-1 overflow-y-auto p-3 space-y-3">
-          {activeSidebar !== 'Dashboard' ? (
-            renderSection()
-          ) : (
-            <>
-          {/* Update time */}
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-              {loading ? 'Loading' : error ? 'Partial Data' : 'Live Data'}
-            </span>
-            <span className="text-slate-400">Updated {updatedAt || '-'}</span>
-          </div>
-
-          {/* First row: 5 stat cards */}
-          <div className="grid grid-cols-5 gap-3">
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
-              <div className="text-xs text-slate-500 mb-2">Inbound</div>
-              <div className="text-xs text-slate-400">Pending Receipt</div>
-              <div className="text-xl font-bold text-slate-800">{stats.pendingInbound}</div>
-            </div>
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
-              <div className="text-xs text-slate-500 mb-1">Outbound</div>
-              <div className="flex justify-between text-xs text-slate-400">
-                <span>Drop Ship</span>
-                <span className="text-slate-700 font-semibold">{stats.outboundTotal}</span>
-              </div>
-              <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>Bulk Transfer</span>
-                <span className="text-slate-700 font-semibold">0</span>
-              </div>
-            </div>
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
-              <div className="text-xs text-slate-500 mb-2">Returns</div>
-              <div className="text-xs text-slate-400">Pending Receipt</div>
-              <div className="text-xl font-bold text-slate-800">{stats.returnPending}</div>
-            </div>
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
-              <div className="text-xs text-slate-500 mb-2">Transfers</div>
-              <div className="text-xs text-slate-400">Pending Receipt</div>
-              <div className="text-xl font-bold text-slate-800">0</div>
-            </div>
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4 min-h-[96px]">
-              <div className="text-xs text-slate-500 mb-1">FBA Returns</div>
-              <div className="flex justify-between text-xs text-slate-400">
-                <span>Pending Receipt</span>
-                <span className="text-slate-700 font-semibold">{stats.returnPending}</span>
-              </div>
-              <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>Pending Relabel</span>
-                <span className="text-slate-700 font-semibold">0</span>
-              </div>
-              <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>Pending Outbound</span>
-                <span className="text-slate-700 font-semibold">0</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Volume Analysis */}
-          <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-slate-800">Volume Analysis</h3>
-              <div className="flex items-center gap-2 text-xs">
-                <button className="px-3 py-1 bg-blue-50 border border-blue-300 text-blue-600 rounded text-xs font-medium">This Week</button>
-                <button className="px-3 py-1 bg-white border border-slate-200 text-slate-500 rounded text-xs">This Month</button>
-                <button className="px-3 py-1 bg-white border border-slate-200 text-slate-500 rounded text-xs">This Year</button>
-                <span className="text-slate-400 mx-1">|</span>
-                <span className="text-slate-500">2026-07-06 → 2026-07-07</span>
-              </div>
-            </div>
-
-            {/* Small stat cards */}
-            <div className="grid grid-cols-3 gap-3 w-[480px] mb-4">
-              <div className="border-t-2 border-blue-400 pt-2">
-                <div className="text-xs text-slate-400">Inbound Orders</div>
-                <div className="text-lg font-bold text-slate-800">{data.inbound.length}</div>
-              </div>
-              <div className="border-t-2 border-purple-400 pt-2">
-                <div className="text-xs text-slate-400">Drop Ship Orders</div>
-                <div className="text-lg font-bold text-slate-800">{stats.outboundTotal}</div>
-              </div>
-              <div className="border-t-2 border-green-400 pt-2">
-                <div className="text-xs text-slate-400">Bulk Transfer Orders</div>
-                <div className="text-lg font-bold text-slate-800">0</div>
-              </div>
-            </div>
-
-            {/* SVG Chart */}
-            <div className="h-[220px] w-full bg-white relative">
-              <svg viewBox="0 0 600 220" className="w-full h-full" preserveAspectRatio="none">
-                {/* Grid lines */}
-                {[0, 1, 2].map((i) => (
-                  <line key={`g-${i}`} x1="0" y1={40 + i * 60} x2="600" y2={40 + i * 60} stroke="#e2e8f0" strokeWidth="1" />
-                ))}
-                {/* Y axis labels */}
-                <text x="10" y="44" fill="#94a3b8" fontSize="10">2</text>
-                <text x="10" y="104" fill="#94a3b8" fontSize="10">1</text>
-                <text x="10" y="164" fill="#94a3b8" fontSize="10">0</text>
-                {/* X axis labels */}
-                <text x="150" y="210" fill="#94a3b8" fontSize="10" textAnchor="middle">2026-07-06</text>
-                <text x="450" y="210" fill="#94a3b8" fontSize="10" textAnchor="middle">2026-07-07</text>
-                {/* Data line (purple - drop ship) */}
-                <line x1="60" y1="40" x2="600" y2="164" stroke="#a855f7" strokeWidth="2" strokeDasharray="4 2" />
-                {/* Data line (green - bulk) */}
-                <line x1="60" y1="164" x2="600" y2="164" stroke="#22c55e" strokeWidth="2" strokeDasharray="4 2" />
-                {/* Legend */}
-                <rect x="460" y="10" width="8" height="3" fill="#a855f7" rx="1" />
-                <text x="472" y="13" fill="#94a3b8" fontSize="8">Drop Ship</text>
-                <rect x="530" y="10" width="8" height="3" fill="#22c55e" rx="1" />
-                <text x="542" y="13" fill="#94a3b8" fontSize="8">Bulk Transfer</text>
-              </svg>
-            </div>
-          </div>
-
-          {/* Bottom 3 columns */}
-          <div className="grid grid-cols-3 gap-3">
-            {/* Announcements */}
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
-              <h4 className="text-sm font-bold text-slate-800 mb-3">Announcements</h4>
-              <div className="border border-slate-100 rounded p-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="text-xs text-slate-700 leading-relaxed">Federal Holiday: Memorial Day - Office Closure Notice</p>
-                    <p className="text-xs text-slate-400 mt-1">2026-05-19</p>
-                  </div>
-                  <div className="flex gap-1 shrink-0">
-                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">Overseas</span>
-                    <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">System</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Inventory */}
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
-              <h4 className="text-sm font-bold text-slate-800 mb-3">Inventory</h4>
-              <div className="flex items-baseline gap-2">
-                <span className="text-xs text-slate-400">Total In Stock</span>
-                <span className="text-xl font-bold text-slate-800">{stats.inventoryTotal}</span>
-              </div>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-xs text-slate-400">Active SKUs</span>
-                <span className="text-base font-bold text-slate-800">{stats.activeSkus}</span>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <div className="flex-1 h-2 bg-green-100 rounded-full">
-                  <div className="h-2 w-1/2 bg-green-500 rounded-full"></div>
-                </div>
-                <span className="text-xs text-slate-500">{stats.inventoryTotal}</span>
-              </div>
-            </div>
-
-            {/* Account Balance */}
-            <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
-              <h4 className="text-sm font-bold text-slate-800 mb-3">Account Balance</h4>
-              <div className="inline-block bg-blue-50 text-blue-600 text-xs px-2 py-0.5 rounded mb-2">USD</div>
-              <div className="text-xl font-bold text-red-500">
-                {stats.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="flex items-center gap-1 mt-2 text-xs">
-                <span className="text-slate-400">Credit Limit:</span>
-                <span className="text-slate-700 font-semibold">1,000,000.00</span>
-              </div>
-              <div className="mt-3 text-right">
-                <button className="text-xs text-blue-600 bg-blue-50 px-3 py-1 rounded hover:bg-blue-100 cursor-pointer">Services</button>
-              </div>
-            </div>
-          </div>
-            </>
-          )}
-        </main>
-      </div>
-    </div>
+    <BrowserRouter basename="/client">
+      <Routes>
+        <Route element={<ClientPortalLayout currentUser={currentUser} onLogout={onLogout} />}>
+          <Route index element={<Dashboard />} />
+          <Route path="orders" element={<PlatformOrders />} />
+          <Route path="inbound" element={<InboundPage />} />
+          <Route path="outbound/dropship" element={<DropshipPage />} />
+          <Route path="outbound/transfer" element={<TransferPage />} />
+          <Route path="inbound-claim" element={<InboundClaimPage />} />
+          <Route path="defective-processing" element={<DefectivePage />} />
+          <Route path="work-orders" element={<WorkOrderPage />} />
+          <Route path="returns" element={<ReturnsPage />} />
+          <Route path="transshipment" element={<TransshipmentPage />} />
+          <Route path="fba-returns/inbound" element={<FBAReturnInboundPage />} />
+          <Route path="fba-returns/relabel" element={<FBAReturnRelabelPage />} />
+          <Route path="fba-returns/outbound" element={<FBAReturnOutboundPage />} />
+          <Route path="inventory/products" element={<ProductInventoryPage />} />
+          <Route path="inventory/cartons" element={<CartonInventoryPage />} />
+          <Route path="inventory/returns" element={<ReturnInventoryPage />} />
+          <Route path="inventory/combined" element={<CombinedInventoryPage />} />
+          <Route path="inventory/product-aging" element={<ProductAgingPage />} />
+          <Route path="inventory/carton-aging" element={<CartonAgingPage />} />
+          <Route path="inventory/return-aging" element={<ReturnAgingPage />} />
+          <Route path="products" element={<ProductManagement />} />
+          <Route path="analytics" element={<Analytics />} />
+          <Route path="account" element={<MyAccount />} />
+          <Route path="account/transactions" element={<TransactionsPage />} />
+          <Route path="settings/platform-auth" element={<PlatformAuthPage />} />
+          <Route path="settings/order-rules" element={<OrderRulesPage />} />
+          <Route path="settings/product-mapping" element={<ProductMappingPage />} />
+          <Route path="settings/accounts" element={<ClientAccountsPage />} />
+          <Route path="settings/roles" element={<ClientRolesPage />} />
+          <Route path="settings/address-book" element={<AddressBookPage />} />
+          <Route path="settings/login-logs" element={<LoginLogsPage />} />
+          <Route path="settings/units" element={<UnitsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   );
 }
