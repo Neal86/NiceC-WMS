@@ -33,6 +33,11 @@ export default function App() {
     window.history.pushState({}, '', '/');
   };
 
+  const handleNavigate = (path: string) => {
+    setCurrentPath(path);
+    window.history.pushState({}, '', path);
+  };
+
   // Not logged in
   if (!currentUser) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
@@ -47,7 +52,7 @@ export default function App() {
 
   // Warehouse role
   if (role === 'WAREHOUSE_OPERATOR' || role === 'OPERATOR' || role === 'WAREHOUSE' || role === 'WAREHOUSE_MANAGER') {
-    return <WarehousePortal currentUser={currentUser} onLogout={handleLogout} />;
+    return <WarehousePortal currentUser={currentUser} onLogout={handleLogout} onNavigate={handleNavigate} />;
   }
 
   // Admin / Manager role
@@ -56,6 +61,7 @@ export default function App() {
       currentUser={currentUser}
       initialPath={currentPath}
       onLogout={handleLogout}
+      onNavigate={handleNavigate}
     />
   );
 }

@@ -21,6 +21,7 @@ interface AdminPanelProps {
   currentUser: any;
   onNavigateBack?: () => void;
   onLogout: () => void;
+  onNavigate?: (path: string) => void;
   initialPath?: string;
 }
 
@@ -60,7 +61,47 @@ const isPending = (item: any) => {
   return ['PENDING', 'NEW', 'CREATED', 'RECEIVING', 'PICKING', 'REVIEW', 'REVIEWS'].includes(status);
 };
 
-export default function AdminPanel({ currentUser, onNavigateBack, onLogout, initialPath = '/admin' }: AdminPanelProps) {
+const getDisplayValue = (item: any, keys: string[]) => {
+  for (const key of keys) {
+    const value = item?.[key];
+    if (value !== undefined && value !== null && value !== '') return String(value);
+  }
+  return '-';
+};
+
+const CompactDataTable = ({ title, rows }: { title: string; rows: any[] }) => (
+  <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+    <h3 className="text-sm font-bold text-slate-800 mb-3">{title}</h3>
+    {rows.length === 0 ? (
+      <div className="text-xs text-slate-400 py-8 text-center">No data found.</div>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 text-slate-400">
+              <th className="text-left py-2 pr-3">ID</th>
+              <th className="text-left py-2 pr-3">Name / No.</th>
+              <th className="text-left py-2 pr-3">Status</th>
+              <th className="text-left py-2 pr-3">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 80).map((row, index) => (
+              <tr key={String(row.id || row.orderNo || row.code || index)} className="border-b border-slate-50 hover:bg-slate-50">
+                <td className="py-2 pr-3 text-slate-500">{getDisplayValue(row, ['id', 'code'])}</td>
+                <td className="py-2 pr-3 text-slate-700">{getDisplayValue(row, ['name', 'username', 'email', 'orderNo', 'skuCode', 'code', 'title'])}</td>
+                <td className="py-2 pr-3 text-slate-500">{getDisplayValue(row, ['status', 'role', 'state'])}</td>
+                <td className="py-2 pr-3 text-slate-400">{getDisplayValue(row, ['updatedAt', 'createdAt', 'createdTime'])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
+
+export default function AdminPanel({ currentUser, onNavigateBack, onLogout, onNavigate, initialPath = '/admin' }: AdminPanelProps) {
   const [activeSidebar, setActiveSidebar] = useState('Dashboard');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -84,19 +125,8 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
 
   // Access check
   const role = String(currentUser?.role || '').toUpperCase();
-  if (!['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(role)) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
-        <div className="bg-white p-8 rounded-lg shadow text-center">
-          <h2 className="text-xl font-bold text-red-600 mb-2">Access Denied</h2>
-          <p className="text-slate-500 mb-4">You do not have permission to access the Admin Panel.</p>
-          <button onClick={onNavigateBack || onLogout} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-            {onNavigateBack ? 'Go Back' : 'Back to Login'}
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const isInternalRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'WAREHOUSE_MANAGER', 'WAREHOUSE_OPERATOR', 'OPERATOR', 'WAREHOUSE'].includes(role);
+  const canAccessAdmin = ['ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(role);
 
   useEffect(() => {
     let mounted = true;
@@ -204,6 +234,42 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
     };
   }, [data]);
 
+  const renderSection = () => {
+    if (activeSidebar === 'Dashboard') return null;
+
+    if (activeSidebar === 'Users') return <CompactDataTable title="Users" rows={data.users} />;
+    if (activeSidebar === 'Customers') return <CompactDataTable title="Customers" rows={data.customers} />;
+    if (activeSidebar === 'Warehouses') return <CompactDataTable title="Warehouses" rows={data.warehouses} />;
+    if (activeSidebar === 'SKUs') return <CompactDataTable title="SKUs" rows={data.skus} />;
+    if (activeSidebar === 'Inventory') return <CompactDataTable title="Inventory" rows={data.inventory} />;
+    if (activeSidebar === 'Inbound') return <CompactDataTable title="Inbound Orders" rows={data.inbound} />;
+    if (activeSidebar === 'Outbound') return <CompactDataTable title="Outbound Orders" rows={data.outbound} />;
+    if (activeSidebar === 'Billing') return <CompactDataTable title="Billing / Invoices" rows={[...data.invoices, ...data.billingRecords]} />;
+    if (activeSidebar === 'Integrations') return <CompactDataTable title="Integrations" rows={[...data.apiKeys, ...data.webhooks, ...data.storeConnections]} />;
+    if (activeSidebar === 'Operation Logs') return <CompactDataTable title="Operation Logs" rows={data.logs} />;
+
+    return (
+      <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+        <h3 className="text-sm font-bold text-slate-800 mb-2">{activeSidebar}</h3>
+        <p className="text-xs text-slate-400">This module is available.</p>
+      </div>
+    );
+  };
+
+  if (!canAccessAdmin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="bg-white p-8 rounded-lg shadow text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-2">Access Denied</h2>
+          <p className="text-slate-500 mb-4">You do not have permission to access the Admin Panel.</p>
+          <button onClick={onNavigateBack || onLogout} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+            {onNavigateBack ? 'Go Back' : 'Back to Login'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const chartPath = chartValues.map((v, i) => {
     const x = 40 + (i * 520) / (chartValues.length - 1);
     const y = 200 - (v / 2.2) * 170;
@@ -231,6 +297,15 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
           </div>
           <span className="text-white/80">{currentUser?.email || ''}</span>
           <span className="text-white/70">ADMIN</span>
+          {isInternalRole && (
+            <button
+              onClick={() => onNavigate?.('/warehouse')}
+              className="text-white/70 hover:text-white border border-white/20 rounded px-2 py-1"
+              title="Switch to Warehouse"
+            >
+              Switch to Warehouse
+            </button>
+          )}
           <button onClick={onLogout} className="text-white/70 hover:text-white cursor-pointer ml-1" title="Logout">
             <LogOut className="w-4 h-4" />
           </button>
@@ -263,6 +338,10 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
 
         {/* Main content */}
         <main className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-100">
+          {activeSidebar !== 'Dashboard' ? (
+            renderSection()
+          ) : (
+            <>
           {/* Warehouse filter */}
           <div className="flex items-center gap-2">
             <button className="h-8 px-3 bg-white border border-slate-200 rounded text-xs text-slate-600 flex items-center gap-1">
@@ -405,6 +484,8 @@ export default function AdminPanel({ currentUser, onNavigateBack, onLogout, init
               </div>
             </div>
           </div>
+            </>
+          )}
         </main>
       </div>
     </div>

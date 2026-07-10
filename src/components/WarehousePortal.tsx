@@ -13,6 +13,7 @@ import {
 interface WarehousePortalProps {
   currentUser: any;
   onLogout: () => void;
+  onNavigate?: (path: string) => void;
 }
 
 interface WorkOrder {
@@ -76,7 +77,7 @@ const sidebarMenu = [
 
 const statusTabLabels = ['All', 'Pending Review', 'Approved', 'Completed', 'Cancelled'];
 
-export default function WarehousePortal({ currentUser, onLogout }: WarehousePortalProps) {
+export default function WarehousePortal({ currentUser, onLogout, onNavigate }: WarehousePortalProps) {
   const [activeSidebar, setActiveSidebar] = useState('Dashboard');
   const [expandedMenu, setExpandedMenu] = useState<string>('');
   const [activeStatusTab, setActiveStatusTab] = useState('All (0)');
@@ -85,6 +86,8 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchText, setSearchText] = useState('');
+  const role = String(currentUser?.role || '').toUpperCase();
+  const isInternalRole = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'WAREHOUSE_MANAGER', 'WAREHOUSE_OPERATOR', 'OPERATOR', 'WAREHOUSE'].includes(role);
 
   const toggleExpand = (label: string) => {
     setExpandedMenu(prev => prev === label ? '' : label);
@@ -224,6 +227,15 @@ export default function WarehousePortal({ currentUser, onLogout }: WarehousePort
           <span className="text-white/60">{currentUser?.warehouseId || 'Warehouse'}</span>
           <span className="text-white/50">|</span>
           <span className="text-white/60">OPERATOR</span>
+          {isInternalRole && (
+            <button
+              onClick={() => onNavigate?.('/admin')}
+              className="text-white/70 hover:text-white border border-white/20 rounded px-2 py-1"
+              title="Switch to Admin"
+            >
+              Switch to Admin
+            </button>
+          )}
           <button onClick={onLogout} className="text-white/70 hover:text-white cursor-pointer ml-1" title="Logout">
             <LogOut className="w-4 h-4" />
           </button>

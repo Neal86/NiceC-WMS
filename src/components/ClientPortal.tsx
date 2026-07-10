@@ -47,6 +47,46 @@ const isPending = (item: any) => {
   return ['PENDING', 'NEW', 'CREATED', 'RECEIVING', 'PICKING', 'REVIEW', 'REVIEWS'].includes(status);
 };
 
+const getDisplayValue = (item: any, keys: string[]) => {
+  for (const key of keys) {
+    const value = item?.[key];
+    if (value !== undefined && value !== null && value !== '') return String(value);
+  }
+  return '-';
+};
+
+const CompactDataTable = ({ title, rows }: { title: string; rows: any[] }) => (
+  <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+    <h3 className="text-sm font-bold text-slate-800 mb-3">{title}</h3>
+    {rows.length === 0 ? (
+      <div className="text-xs text-slate-400 py-8 text-center">No data found.</div>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 text-slate-400">
+              <th className="text-left py-2 pr-3">ID</th>
+              <th className="text-left py-2 pr-3">Name / No.</th>
+              <th className="text-left py-2 pr-3">Status</th>
+              <th className="text-left py-2 pr-3">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 80).map((row, index) => (
+              <tr key={String(row.id || row.orderNo || row.code || index)} className="border-b border-slate-50 hover:bg-slate-50">
+                <td className="py-2 pr-3 text-slate-500">{getDisplayValue(row, ['id', 'code'])}</td>
+                <td className="py-2 pr-3 text-slate-700">{getDisplayValue(row, ['name', 'username', 'email', 'orderNo', 'skuCode', 'code', 'title'])}</td>
+                <td className="py-2 pr-3 text-slate-500">{getDisplayValue(row, ['status', 'role', 'state'])}</td>
+                <td className="py-2 pr-3 text-slate-400">{getDisplayValue(row, ['updatedAt', 'createdAt', 'createdTime'])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
+
 export default function ClientPortal({ currentUser, onLogout }: ClientPortalProps) {
   const [activeSidebar, setActiveSidebar] = useState('Dashboard');
   const [loading, setLoading] = useState(true);
@@ -156,6 +196,27 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
     };
   }, [data]);
 
+  const renderSection = () => {
+    if (activeSidebar === 'Dashboard') return null;
+
+    if (activeSidebar === 'Orders') return <CompactDataTable title="Orders" rows={data.outbound} />;
+    if (activeSidebar === 'Inventory') return <CompactDataTable title="Inventory" rows={data.inventory} />;
+    if (activeSidebar === 'Inbound') return <CompactDataTable title="Inbound" rows={data.inbound} />;
+    if (activeSidebar === 'Returns') return <CompactDataTable title="Returns" rows={data.returns} />;
+    if (activeSidebar === 'Billing') return <CompactDataTable title="Billing" rows={data.billingRecords} />;
+    if (activeSidebar === 'Invoices') return <CompactDataTable title="Invoices" rows={data.invoices} />;
+    if (activeSidebar === 'API Keys') return <CompactDataTable title="API Keys" rows={data.apiKeys} />;
+    if (activeSidebar === 'Webhooks') return <CompactDataTable title="Webhooks" rows={data.webhooks} />;
+    if (activeSidebar === 'Store Connections') return <CompactDataTable title="Store Connections" rows={data.storeConnections} />;
+
+    return (
+      <div className="bg-white rounded-md shadow-sm border border-slate-100 p-4">
+        <h3 className="text-sm font-bold text-slate-800 mb-2">{activeSidebar}</h3>
+        <p className="text-xs text-slate-400">This module is available.</p>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen w-full bg-slate-100 flex flex-col font-sans">
       {/* Header */}
@@ -176,7 +237,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
           <span className="text-white/50">|</span>
           <span className="text-white/60">CLIENT</span>
           <span className="text-white/50">|</span>
-          <span className="text-white/60 max-w-[160px] truncate">Quanzhou - Yaozixing - Drop Ship</span>
+          <span className="text-white/60 max-w-[160px] truncate">{currentUser.customerId || 'Client Account'}</span>
           <button onClick={onLogout} className="text-white/70 hover:text-white cursor-pointer ml-1" title="Logout">
             <LogOut className="w-4 h-4" />
           </button>
@@ -210,6 +271,10 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto p-3 space-y-3">
+          {activeSidebar !== 'Dashboard' ? (
+            renderSection()
+          ) : (
+            <>
           {/* Update time */}
           <div className="flex items-center justify-between text-xs">
             <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
@@ -353,7 +418,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
                 <div className="flex-1 h-2 bg-green-100 rounded-full">
                   <div className="h-2 w-1/2 bg-green-500 rounded-full"></div>
                 </div>
-                <span className="text-xs text-slate-500">204</span>
+                <span className="text-xs text-slate-500">{stats.inventoryTotal}</span>
               </div>
             </div>
 
@@ -362,7 +427,7 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
               <h4 className="text-sm font-bold text-slate-800 mb-3">Account Balance</h4>
               <div className="inline-block bg-blue-50 text-blue-600 text-xs px-2 py-0.5 rounded mb-2">USD</div>
               <div className="text-xl font-bold text-red-500">
-                {(stats.balance * -1).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {stats.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div className="flex items-center gap-1 mt-2 text-xs">
                 <span className="text-slate-400">Credit Limit:</span>
@@ -373,6 +438,8 @@ export default function ClientPortal({ currentUser, onLogout }: ClientPortalProp
               </div>
             </div>
           </div>
+            </>
+          )}
         </main>
       </div>
     </div>
