@@ -52,6 +52,7 @@ export default function ReturnItemsPage({ currentUser }: WarehousePageProps) {
     setLoading(true); setError('');
     try {
       const params: Record<string, any> = { page, pageSize };
+      if (currentUser?.warehouseId) params.warehouseId = currentUser.warehouseId;
       if (statusTab !== 'all') params.status = statusTab.toUpperCase();
       Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await returnApi.getReturns(params);

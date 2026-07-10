@@ -54,6 +54,7 @@ export default function StockTransferPage({ currentUser, onNavigate }: Warehouse
     setLoading(true); setError('');
     try {
       const params: Record<string, any> = { page, pageSize, orderType: 'STOCK_TRANSFER' };
+      if (currentUser?.warehouseId) params.warehouseId = currentUser.warehouseId;
       if (statusTab !== 'all') params.status = statusTab.toUpperCase();
       Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await outboundApi.getOrders(params);

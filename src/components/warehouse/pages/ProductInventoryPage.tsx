@@ -52,7 +52,7 @@ export default function ProductInventoryPage({ currentUser }: WarehousePageProps
       setError(err?.message || '加载失败');
       setData([]);
     } finally { setLoading(false); }
-  }, [subTab, hideZero]);
+  }, [subTab, hideZero, currentUser?.warehouseId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

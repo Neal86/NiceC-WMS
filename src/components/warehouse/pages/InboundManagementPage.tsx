@@ -53,6 +53,7 @@ export default function InboundManagementPage({ currentUser }: WarehousePageProp
     setLoading(true); setError('');
     try {
       const params: Record<string, any> = { page, pageSize };
+      if (currentUser?.warehouseId) params.warehouseId = currentUser.warehouseId;
       if (statusTab !== 'all') params.status = statusTab.toUpperCase();
       if (bizType !== 'all') params.inboundType = bizType;
       Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });

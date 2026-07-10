@@ -13,7 +13,7 @@ interface Column<T = any> {
 interface DataTableProps<T = any> {
   columns: Column<T>[];
   data: T[];
-  rowKey: string | ((row: T) => string);
+  rowKey: string | ((row: T, index: number) => string);
   loading?: boolean;
   emptyText?: string;
   selectedKeys?: Set<string>;
@@ -38,9 +38,9 @@ export default function DataTable<T extends Record<string, any>>({
   const allSelected = data.length > 0 && selectedKeys?.size === data.length;
   const someSelected = selectedKeys && selectedKeys.size > 0 && selectedKeys.size < data.length;
 
-  const getKey = (row: T): string => {
-    if (typeof rowKey === 'function') return rowKey(row);
-    return String(row[rowKey] ?? Math.random());
+  const getKey = (row: T, idx: number): string => {
+    if (typeof rowKey === 'function') return rowKey(row, idx);
+    return String(row[rowKey] ?? idx);
   };
 
   const handleSelectAll = () => {
@@ -48,7 +48,7 @@ export default function DataTable<T extends Record<string, any>>({
     if (allSelected) {
       onSelectChange(new Set());
     } else {
-      const keys = new Set(data.map(row => getKey(row)));
+      const keys = new Set(data.map((row, idx) => getKey(row, idx)));
       onSelectChange(keys);
     }
   };
@@ -143,7 +143,7 @@ export default function DataTable<T extends Record<string, any>>({
             </tr>
           )}
           {!loading && !error && data.map((row, idx) => {
-            const key = getKey(row);
+            const key = getKey(row, idx);
             return (
               <tr
                 key={key}
