@@ -31,3 +31,143 @@
   animation: shake 0.2s ease-in-out 0s 2;
 }
 
+/* ===== Warehouse Portal Styles ===== */
+
+/* Reset font for warehouse section */
+.warehouse-layout,
+.warehouse-layout * {
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+.warehouse-layout {
+  font-size: 12px;
+  color: #374151;
+}
+
+/* Warehouse table base */
+.warehouse-table {
+  font-size: 12px;
+}
+
+.warehouse-table thead th {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  background-color: #fafafa;
+}
+
+.warehouse-table tbody td {
+  font-size: 12px;
+  color: #374151;
+}
+
+/* Sticky header for table */
+.warehouse-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+/* Horizontal scroll for table wrapper */
+.warehouse-table-wrapper {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.warehouse-table-wrapper::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.warehouse-table-wrapper::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.warehouse-table-wrapper::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+/* Status badge */
+.warehouse-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* Filter bar */
+.warehouse-filter-bar select,
+.warehouse-filter-bar input {
+  height: 28px;
+  font-size: 12px;
+}
+
+/* Pagination */
+.warehouse-pagination {
+  font-size: 12px;
+}
+
+/* Status tabs */
+.warehouse-status-tabs {
+  font-size: 12px;
+}
+
+/* Sidebar scroll */
+.warehouse-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.warehouse-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
+}
+
+/* Page transitions */
+.warehouse-page {
+  background-color: #fff;
+  border: 1px solid #e5e7eb;
+  margin: 8px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Detail section */
+.warehouse-detail-section {
+  background-color: #fff;
+  border: 1px solid #e5e7eb;
+}
+
+/* Empty state */
+.warehouse-empty-cell {
+  font-size: 12px;
+}
+
+/* Action buttons base */
+.warehouse-action-toolbar button {
+  font-size: 12px;
+}
+
+/* Dropdown menus in warehouse */
+.warehouse-dropdown {
+  font-size: 12px;
+}
+
+/* Global warehouse content area minimum width */
+.warehouse-content {
+  min-width: 0;
+}
+
+/* Override any card-like styles in warehouse */
+.warehouse-layout .bg-white.rounded-lg,
+.warehouse-layout .shadow-sm {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
