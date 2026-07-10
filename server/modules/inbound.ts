@@ -84,6 +84,10 @@ export function registerInboundRoutes(router: Router): void {
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const order = await prisma.inboundOrder.findUnique({ where: { id: req.params.id } });
+        if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        if (isClientUser(req.user) && req.user.customerId && order.customerId !== req.user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(req.user) && req.user.warehouseId && order.warehouseId !== req.user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
         const updated = await prisma.inboundOrder.update({ where: { id: req.params.id }, data: { status, remark } });
         return res.json(updated);
       } catch (err: any) {
@@ -98,6 +102,10 @@ export function registerInboundRoutes(router: Router): void {
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const order = await prisma.inboundOrder.findUnique({ where: { id: req.params.id } });
+        if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        if (isClientUser(req.user) && req.user.customerId && order.customerId !== req.user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(req.user) && req.user.warehouseId && order.warehouseId !== req.user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
         await prisma.inboundOrder.update({ where: { id: req.params.id }, data: { status: 'CANCELLED' } });
         return res.json({ status: 'success', message: 'Inbound order cancelled' });
       } catch (err: any) {
@@ -109,6 +117,12 @@ export function registerInboundRoutes(router: Router): void {
 
   router.post('/inbound-orders/:id/receive', requireAuth, async (req: any, res) => {
     const receivedItems = req.body.receivedItems || req.body.items || [];
+    if (!Array.isArray(receivedItems) || receivedItems.length === 0) return res.status(400).json({ error: 'receivedItems must be a non-empty array' });
+    for (const item of receivedItems) {
+      if (item.qtyReceived !== undefined && (!Number.isFinite(Number(item.qtyReceived)) || Number(item.qtyReceived) <= 0)) {
+        return res.status(400).json({ error: `Invalid qtyReceived for item ${item.skuId || item.skuCode}` });
+      }
+    }
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -117,6 +131,9 @@ export function registerInboundRoutes(router: Router): void {
           where: { id: req.params.id }, include: { items: true }
         });
         if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        if (isClientUser(req.user) && req.user.customerId && order.customerId !== req.user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(req.user) && req.user.warehouseId && order.warehouseId !== req.user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+        if (order.status === 'CANCELLED' || order.status === 'COMPLETED') return res.status(400).json({ error: 'Inbound order is already cancelled or completed' });
 
         await prisma.$transaction(async (tx) => {
           for (const item of receivedItems) {
@@ -196,6 +213,11 @@ export function registerInboundRoutes(router: Router): void {
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const order = await prisma.inboundOrder.findUnique({ where: { id: req.params.id } });
+        if (!order) return res.status(404).json({ error: 'Inbound order not found' });
+        if (isClientUser(req.user) && req.user.customerId && order.customerId !== req.user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(req.user) && req.user.warehouseId && order.warehouseId !== req.user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+        if (order.status === 'CANCELLED') return res.status(400).json({ error: 'Inbound order is cancelled' });
         const result = await prisma.$transaction(async (tx) => {
           const tasks = await tx.putawayTask.findMany({ where: { inboundOrderId: req.params.id, status: 'PENDING' } });
           for (const task of tasks) {

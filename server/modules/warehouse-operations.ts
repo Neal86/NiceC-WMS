@@ -3,15 +3,19 @@ import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
 import { getWebSocket } from '../websocket';
 import { resolveWarehouseId } from './warehouse';
-import { requireAuth } from '../middleware';
+import { requireAuth, requireRole, isClientUser, isWarehouseUser, assertCustomerScope, assertWarehouseScope } from '../middleware';
 
 export function registerWarehouseOperationsRoutes(router: Router): void {
   router.get('/putaway-tasks', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const tasks = await prisma.putawayTask.findMany({ orderBy: { createdAt: 'desc' } });
+        const where: any = {};
+        if (isWarehouseUser(user) && user.warehouseId) where.warehouseId = user.warehouseId;
+        if (isClientUser(user)) return res.json([]);
+        const tasks = await prisma.putawayTask.findMany({ where, orderBy: { createdAt: 'desc' } });
         return res.json(tasks);
       } catch (err) { console.error('Prisma putaway-tasks error:', err); }
     }
@@ -19,17 +23,22 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.post('/putaway-tasks/:id/complete', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const task = await prisma.putawayTask.findUnique({ where: { id: req.params.id } });
         if (!task) return res.status(404).json({ error: 'Putaway task not found' });
-        await prisma.putawayTask.update({ where: { id: req.params.id }, data: { status: 'COMPLETED', operatorId: req.user?.id } });
-        const inv = await prisma.inventory.findFirst({ where: { skuId: task.skuId, warehouseId: task.warehouseId } });
-        if (inv) {
-          await prisma.inventory.update({ where: { id: inv.id }, data: { availableQty: inv.availableQty + task.quantity } });
-        }
+        if (!assertWarehouseScope(user, task.warehouseId)) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+        if (task.status === 'COMPLETED') return res.status(400).json({ error: 'Putaway task already completed' });
+        await prisma.$transaction(async (tx) => {
+          await tx.putawayTask.update({ where: { id: req.params.id }, data: { status: 'COMPLETED', operatorId: req.user?.id } });
+          const inv = await tx.inventory.findFirst({ where: { skuId: task.skuId, warehouseId: task.warehouseId } });
+          if (inv) {
+            await tx.inventory.update({ where: { id: inv.id }, data: { availableQty: inv.availableQty + task.quantity } });
+          }
+        });
         return res.json({ status: 'success', message: 'Putaway task completed' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -37,11 +46,15 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/pick-tasks', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const tasks = await prisma.pickTask.findMany({ orderBy: { createdAt: 'desc' } });
+        const where: any = {};
+          if (isWarehouseUser(user) && user.warehouseId) where.warehouseId = user.warehouseId;
+          if (isClientUser(user)) return res.json([]);
+          const tasks = await prisma.pickTask.findMany({ where, orderBy: { createdAt: 'desc' } });
         return res.json(tasks);
       } catch (err) { console.error('Prisma pick-tasks error:', err); }
     }
@@ -63,11 +76,15 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/review-tasks', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const tasks = await prisma.reviewTask.findMany({ orderBy: { createdAt: 'desc' } });
+        const where: any = {};
+          if (isWarehouseUser(user) && user.warehouseId) where.warehouseId = user.warehouseId;
+          if (isClientUser(user)) return res.json([]);
+          const tasks = await prisma.reviewTask.findMany({ where, orderBy: { createdAt: 'desc' } });
         return res.json(tasks);
       } catch (err) { console.error('Prisma review-tasks error:', err); }
     }
@@ -89,11 +106,15 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/exception-cases', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const cases = await prisma.exceptionCase.findMany({ orderBy: { createdAt: 'desc' } });
+        const ecWhere: any = {};
+          if (isClientUser(user) && user.customerId) ecWhere.customerId = user.customerId;
+          if (isWarehouseUser(user) && user.warehouseId) ecWhere.warehouseId = user.warehouseId;
+          const cases = await prisma.exceptionCase.findMany({ where: ecWhere, orderBy: { createdAt: 'desc' } });
         return res.json(cases);
       } catch (err) { console.error('Prisma exception-cases error:', err); }
     }
@@ -115,11 +136,15 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/return-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const returns = await prisma.returnOrder.findMany({ include: { items: true }, orderBy: { createdAt: 'desc' } });
+        const retWhere: any = {};
+          if (isClientUser(user) && user.customerId) retWhere.customerId = user.customerId;
+          if (isWarehouseUser(user) && user.warehouseId) retWhere.warehouseId = user.warehouseId;
+          const returns = await prisma.returnOrder.findMany({ where: retWhere, include: { items: true }, orderBy: { createdAt: 'desc' } });
         return res.json(returns);
       } catch (err) { console.error('Prisma return orders fetch error:', err); }
     }
@@ -208,13 +233,16 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.post('/return-orders/:id/restock', requireAuth, async (req: any, res) => {
-    const hasDb = await checkDbConnection();
+    const user = req.user;
     const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
+    const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
         const returnOrder = await prisma.returnOrder.findUnique({ where: { id: req.params.id }, include: { items: true } });
         if (!returnOrder) return res.status(404).json({ error: 'Return order not found' });
+        if (isClientUser(user) && user.customerId && returnOrder.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(user) && user.warehouseId && (returnOrder as any).warehouseId !== user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
         if (returnOrder.status !== 'INSPECTED') return res.status(400).json({ error: `Cannot restock return in status '${returnOrder.status}'. Must be INSPECTED.` });
 
         await prisma.$transaction(async (tx) => {
@@ -224,12 +252,16 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
 
             if (item.condition === 'RESTOCK' || item.condition === 'GOOD') {
               if (inv) {
-                await tx.inventory.update({ where: { id: inv.id }, data: { availableQty: inv.availableQty + item.qtyReceived } });
+                await tx.inventory.update({ where: { id: inv.id }, data: { availableQty: inv.availableQty + item.qtyReceived, onHand: (inv.onHand || 0) + item.qtyReceived } });
+              } else {
+                inv = await tx.inventory.create({ data: { customerId: returnOrder.customerId, skuId: item.skuId, skuCode: item.skuCode, warehouseId: effectiveWhId, onHand: item.qtyReceived, availableQty: item.qtyReceived, reservedQty: 0, damagedQty: 0 } });
               }
               await tx.inventoryTransaction.create({ data: { customerId: returnOrder.customerId, warehouseId: effectiveWhId, skuId: item.skuId, skuCode: item.skuCode, type: 'RETURN_RESTOCK', direction: 'IN', quantity: item.qtyReceived, beforeQty: inv ? inv.availableQty : 0, afterQty: inv ? inv.availableQty + item.qtyReceived : item.qtyReceived, reason: `Return ${returnOrder.returnNo} restock` } });
             } else if (item.condition === 'DAMAGED' || item.condition === 'DAMAGE') {
               if (inv) {
-                await tx.inventory.update({ where: { id: inv.id }, data: { damagedQty: (inv.damagedQty || 0) + item.qtyReceived } });
+                await tx.inventory.update({ where: { id: inv.id }, data: { damagedQty: (inv.damagedQty || 0) + item.qtyReceived, onHand: (inv.onHand || 0) + item.qtyReceived } });
+              } else {
+                inv = await tx.inventory.create({ data: { customerId: returnOrder.customerId, skuId: item.skuId, skuCode: item.skuCode, warehouseId: effectiveWhId, onHand: item.qtyReceived, availableQty: 0, reservedQty: 0, damagedQty: item.qtyReceived } });
               }
               await tx.inventoryTransaction.create({ data: { customerId: returnOrder.customerId, warehouseId: effectiveWhId, skuId: item.skuId, skuCode: item.skuCode, type: 'RETURN_DAMAGED', direction: 'IN', quantity: item.qtyReceived, beforeQty: inv ? inv.damagedQty || 0 : 0, afterQty: inv ? (inv.damagedQty || 0) + item.qtyReceived : item.qtyReceived, reason: `Return ${returnOrder.returnNo} damaged items` } });
             }
@@ -237,7 +269,6 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
           await tx.returnOrder.update({ where: { id: req.params.id }, data: { status: 'RESTOCKED' } });
         });
 
-        const user = req.user;
         await prisma.operationLog.create({ data: { userId: user?.id || 'system', username: user?.username || 'system', action: 'RETURN_RESTOCK', details: `Return order ${returnOrder.returnNo} restocked` } });
 
         return res.json({ status: 'success', message: 'Return restocked with inventory update' });
@@ -247,6 +278,7 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.post('/return-orders/:id/scrap', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     if (hasDb) {
@@ -254,6 +286,9 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
       try {
         const returnOrder = await prisma.returnOrder.findUnique({ where: { id: req.params.id }, include: { items: true } });
         if (!returnOrder) return res.status(404).json({ error: 'Return order not found' });
+        if (isClientUser(user)) return res.status(403).json({ error: 'Forbidden. Client cannot scrap.' });
+        if (isClientUser(user) && user.customerId && returnOrder.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(user) && user.warehouseId && (returnOrder as any).warehouseId !== user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
         await prisma.$transaction(async (tx) => {
           for (const item of returnOrder.items) {
             const inv = await tx.inventory.findFirst({ where: { skuId: item.skuId, warehouseId: effectiveWhId } });
@@ -271,11 +306,15 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/relabel-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const orders = await prisma.relabelOrder.findMany({ orderBy: { createdAt: 'desc' } });
+        const rlWhere: any = {};
+          if (isClientUser(user) && user.customerId) rlWhere.customerId = user.customerId;
+          if (isWarehouseUser(user) && user.warehouseId) rlWhere.warehouseId = user.warehouseId;
+          const orders = await prisma.relabelOrder.findMany({ where: rlWhere, orderBy: { createdAt: 'desc' } });
         return res.json(orders);
       } catch (err) { console.error('Prisma relabel orders fetch error:', err); }
     }
@@ -283,11 +322,15 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/work-orders', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const orders = await prisma.workOrder.findMany({ orderBy: { createdAt: 'desc' } });
+        const woWhere: any = {};
+          if (isClientUser(user) && user.customerId) woWhere.customerId = user.customerId;
+          if (isWarehouseUser(user) && user.warehouseId) woWhere.warehouseId = user.warehouseId;
+          const orders = await prisma.workOrder.findMany({ where: woWhere, orderBy: { createdAt: 'desc' } });
         return res.json(orders);
       } catch (err) { console.error('Prisma work orders fetch error:', err); }
     }
@@ -295,24 +338,32 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/locations', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const locations = await prisma.location.findMany({ orderBy: { code: 'asc' } });
+        const locWhere: any = {};
+          if (isClientUser(user)) return res.json([]);
+          if (isWarehouseUser(user) && user.warehouseId) locWhere.warehouseId = user.warehouseId;
+          const locations = await prisma.location.findMany({ where: locWhere, orderBy: { code: 'asc' } });
         return res.json(locations);
       } catch (err) { console.error('Prisma locations error:', err); }
     }
     res.json([]);
   });
 
-  router.post('/locations', requireAuth, async (req: any, res) => {
+  router.post('/locations', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN', 'WAREHOUSE', 'WAREHOUSE_MANAGER', 'WAREHOUSE_OPERATOR'), async (req: any, res) => {
+    const user = req.user;
     const { code, zoneCode, warehouseId } = req.body;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const location = await prisma.location.create({ data: { code, zoneCode, warehouseId } });
+        if (isClientUser(user)) return res.status(403).json({ error: 'Forbidden.' });
+          const locWhId = isWarehouseUser(user) && user.warehouseId ? user.warehouseId : warehouseId;
+          if (isWarehouseUser(user) && !assertWarehouseScope(user, warehouseId)) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+          const location = await prisma.location.create({ data: { code, zoneCode, warehouseId: locWhId } });
         return res.status(201).json(location);
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
     }
@@ -345,11 +396,13 @@ export function registerWarehouseOperationsRoutes(router: Router): void {
   });
 
   router.get('/waves', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
-        const waves = await prisma.wave.findMany({ orderBy: { createdTime: 'desc' } });
+        if (isClientUser(user)) return res.json([]);
+          const waves = await prisma.wave.findMany({ orderBy: { createdTime: 'desc' } });
         return res.json(waves);
       } catch (err) { console.error('Prisma waves error:', err); }
     }

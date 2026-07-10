@@ -96,6 +96,10 @@ export function registerInventoryRoutes(router: Router): void {
     if (!assertWarehouseScope(req.user, inv.warehouseId)) {
       return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
     }
+    const { availableQty, reservedQty, damagedQty } = req.body;
+    if (availableQty !== undefined && Number(availableQty) < 0) return res.status(400).json({ error: 'availableQty cannot be negative' });
+    if (reservedQty !== undefined && Number(reservedQty) < 0) return res.status(400).json({ error: 'reservedQty cannot be negative' });
+    if (damagedQty !== undefined && Number(damagedQty) < 0) return res.status(400).json({ error: 'damagedQty cannot be negative' });
     db.inventory[index] = { ...db.inventory[index], ...req.body };
     saveDB();
     res.json({ status: 'success', inventory: db.inventory[index] });
@@ -167,39 +171,78 @@ export function registerInventoryRoutes(router: Router): void {
       const prisma = getPrisma();
       try {
         await prisma.$transaction(async (tx) => {
+          const qty = Number(quantity);
+          if (!Number.isFinite(qty) || qty <= 0) throw new Error('quantity must be greater than 0');
+
           const fromInv = await tx.inventory.findFirst({ where: { skuId, warehouseId: fromWarehouseId } });
-          if (!fromInv || fromInv.availableQty < quantity) throw new Error('Insufficient stock at source warehouse');
+          if (!fromInv || fromInv.availableQty < qty) throw new Error('Insufficient available stock at source warehouse');
+
           const fromOnHand = fromInv.onHand || 0;
-          await tx.inventory.update({
+          if (fromOnHand < qty) throw new Error('Insufficient onHand stock at source warehouse');
+
+          const updatedFrom = await tx.inventory.update({
             where: { id: fromInv.id },
             data: {
-              availableQty: fromInv.availableQty - quantity,
-              onHand: Math.max(0, fromOnHand - quantity)
+              availableQty: fromInv.availableQty - qty,
+              onHand: fromOnHand - qty
             }
           });
-          const toInv = await tx.inventory.findFirst({ where: { skuId, warehouseId: toWarehouseId } });
+
+          let toInv = await tx.inventory.findFirst({ where: { skuId, warehouseId: toWarehouseId } });
+
+          let beforeToQty = 0;
+          let updatedTo: any;
+
           if (toInv) {
-            await tx.inventory.update({
+            beforeToQty = toInv.availableQty;
+            updatedTo = await tx.inventory.update({
               where: { id: toInv.id },
               data: {
-                availableQty: toInv.availableQty + quantity,
-                onHand: (toInv.onHand || 0) + quantity
+                availableQty: toInv.availableQty + qty,
+                onHand: (toInv.onHand || 0) + qty
+              }
+            });
+          } else {
+            updatedTo = await tx.inventory.create({
+              data: {
+                customerId: fromInv.customerId,
+                skuId,
+                skuCode: fromInv.skuCode,
+                warehouseId: toWarehouseId,
+                onHand: qty,
+                availableQty: qty,
+                reservedQty: 0,
+                damagedQty: 0
               }
             });
           }
+
           await tx.inventoryTransaction.create({
             data: {
-              customerId: fromInv.customerId, warehouseId: fromWarehouseId, skuId, skuCode: fromInv.skuCode,
-              type: 'TRANSFER_OUT', direction: 'OUT', quantity,
-              beforeQty: fromInv.availableQty, afterQty: fromInv.availableQty - quantity,
+              customerId: fromInv.customerId,
+              warehouseId: fromWarehouseId,
+              skuId,
+              skuCode: fromInv.skuCode,
+              type: 'TRANSFER_OUT',
+              direction: 'OUT',
+              quantity: qty,
+              beforeQty: fromInv.availableQty,
+              afterQty: updatedFrom.availableQty,
               reason: `Transfer to warehouse ${toWarehouseId}`
             }
           });
+
           await tx.inventoryTransaction.create({
             data: {
-              customerId: fromInv.customerId, warehouseId: toWarehouseId, skuId, skuCode: fromInv.skuCode,
-              type: 'TRANSFER_IN', direction: 'IN', quantity,
-              beforeQty: toInv ? toInv.availableQty : 0, afterQty: toInv ? toInv.availableQty + quantity : quantity,
+              customerId: fromInv.customerId,
+              warehouseId: toWarehouseId,
+              skuId,
+              skuCode: fromInv.skuCode,
+              type: 'TRANSFER_IN',
+              direction: 'IN',
+              quantity: qty,
+              beforeQty: beforeToQty,
+              afterQty: updatedTo.availableQty,
               reason: `Transfer from warehouse ${fromWarehouseId}`
             }
           });
@@ -228,7 +271,7 @@ export function registerInventoryRoutes(router: Router): void {
       }
     }
     const db = getDB();
-    res.json(db.inventory || []);
+    res.json((db as any).inventoryTransactions || []);
   });
 
   router.get('/inventory-reservations', requireAuth, async (req: any, res) => {

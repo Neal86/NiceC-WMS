@@ -3,7 +3,7 @@ import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
 import { getWebSocket } from '../websocket';
 import { resolveWarehouseId } from './warehouse';
-import { requireAuth, requireRole } from '../middleware';
+import { requireAuth, requireRole, isWarehouseUser, assertWarehouseScope, requireApiKeyOrAuth } from '../middleware';
 import { outboundCreateSchema } from '../validation';
 
 export function registerOutboundRoutes(router: Router): void {
@@ -34,7 +34,7 @@ export function registerOutboundRoutes(router: Router): void {
     return ['CLIENT', 'CUSTOMER'].includes((user?.role || '').toUpperCase());
   }
 
-  router.get('/outbound-orders', requireAuth, async (req: any, res) => {
+  router.get('/outbound-orders', requireApiKeyOrAuth, async (req: any, res) => {
     const user = req.user;
     const { tab, customerNameCode, orderType, salesPlatform, logisticsChannel, carrier, productCategory, recipient, sku, outboundOrderNo, createdTimeStart, createdTimeEnd, minQty, maxQty, sortBy = 'createdTime', sortOrder = 'desc', page = '1', pageSize = '10' } = req.query;
 
@@ -46,6 +46,7 @@ export function registerOutboundRoutes(router: Router): void {
       try {
         const where: any = {};
         if (isClient(user) && user.customerId) where.customerId = user.customerId;
+        if (isWarehouseUser(user) && user.warehouseId) where.warehouseId = user.warehouseId;
 
         if (activeTab !== 'ALL') where.status = activeTab;
 
@@ -86,6 +87,7 @@ export function registerOutboundRoutes(router: Router): void {
 
         const countsWhere: any = {};
         if (isClient(user) && user.customerId) countsWhere.customerId = user.customerId;
+        if (isWarehouseUser(user) && user.warehouseId) countsWhere.warehouseId = user.warehouseId;
         const countsGroup = await prisma.outboundOrder.groupBy({ by: ['status'], where: countsWhere, _count: { id: true } });
 
         const counts: any = { ALL: 0, PENDING: 0, PICKING: 0, REVIEWS: 0, SHIPPING: 0, SHIPPED: 0, EXCEPTIONS: 0, CANCELLED: 0 };
@@ -110,6 +112,7 @@ export function registerOutboundRoutes(router: Router): void {
     const db = getDB();
     let orders = [...db.outboundOrders];
     if (isClient(user) && user.customerId) orders = orders.filter(ord => ord.customerId === user.customerId);
+    if (isWarehouseUser(user) && user.warehouseId) orders = orders.filter((ord: any) => ord.warehouseId === user.warehouseId);
 
     const counts = { ALL: orders.length, PENDING: orders.filter(o => o.status === 'PENDING').length, PICKING: orders.filter(o => o.status === 'PICKING').length, REVIEWS: orders.filter(o => o.status === 'REVIEWS').length, SHIPPING: orders.filter(o => o.status === 'SHIPPING').length, SHIPPED: orders.filter(o => o.status === 'SHIPPED').length, EXCEPTIONS: orders.filter(o => o.status === 'EXCEPTIONS').length, CANCELLED: orders.filter(o => o.status === 'CANCELLED').length };
 
@@ -146,7 +149,7 @@ export function registerOutboundRoutes(router: Router): void {
     res.json({ orders: paginatedOrders, total, counts, page: pNum, pageSize: pSize });
   });
 
-  router.get('/outbound-orders/:id', requireAuth, async (req: any, res) => {
+  router.get('/outbound-orders/:id', requireApiKeyOrAuth, async (req: any, res) => {
     const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -157,6 +160,7 @@ export function registerOutboundRoutes(router: Router): void {
         });
         if (!order) return res.status(404).json({ error: 'Order not found' });
         if (isClient(user) && user.customerId && order.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (isWarehouseUser(user) && user.warehouseId && order.warehouseId !== user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
         return res.json({ ...order, customerName: order.customer?.name || '', customerCode: order.customer?.code || '', logisticsChannelName: order.logisticsChannel?.name || '', carrierName: order.carrier?.name || '', items: order.items || [] });
       } catch (err) { console.error('Prisma order fetch error:', err); }
     }
@@ -164,6 +168,7 @@ export function registerOutboundRoutes(router: Router): void {
     const order = db.outboundOrders.find(o => o.id === req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     if (isClient(user) && user.customerId && order.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+    if (isWarehouseUser(user) && user.warehouseId && (order as any).warehouseId !== user.warehouseId) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
     const cust = db.customers.find(c => c.id === order.customerId);
     const chan = db.logisticsChannels.find(l => l.id === order.logisticsChannelId);
     const carr = db.carriers.find(c => c.id === order.carrierId);
@@ -171,7 +176,7 @@ export function registerOutboundRoutes(router: Router): void {
     res.json({ ...order, customerName: cust?.name || '', customerCode: cust?.code || '', logisticsChannelName: chan?.name || '', carrierName: carr?.name || '', items });
   });
 
-  router.post('/outbound-orders', requireAuth, async (req: any, res) => {
+  router.post('/outbound-orders', requireApiKeyOrAuth, async (req: any, res) => {
     const user = req.user;
     const { customerId, logisticsChannelId, carrierId, remark = '', recipient, salesPlatform = 'Amazon', orderType = '单品单件', items = [] } = req.body;
 
@@ -184,6 +189,7 @@ export function registerOutboundRoutes(router: Router): void {
     const totalQty = items.reduce((sum: number, item: any) => sum + (item.qty || 1), 0);
     const totalWeight = parseFloat((totalQty * 1.2).toFixed(2));
     const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
+    if (!assertWarehouseScope(user, effectiveWhId)) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
 
     const hasDb = await checkDbConnection();
     if (hasDb) {
@@ -202,7 +208,8 @@ export function registerOutboundRoutes(router: Router): void {
             data: {
               id: newOrderId, orderNo, status: 'PENDING', remark: remark || '-', totalWeight, totalQty,
               customerId: resolvedCustomerId, logisticsChannelId, carrierId, waveId: null,
-              labelPrinted: 'NOT_PRINTED', recipient, salesPlatform, orderType, createdTime: new Date()
+              labelPrinted: 'NOT_PRINTED', recipient, salesPlatform, orderType, createdTime: new Date(),
+              warehouseId: effectiveWhId
             }
           });
 
@@ -252,7 +259,7 @@ export function registerOutboundRoutes(router: Router): void {
       const inv = db.inventory.find(i => i.skuId === item.skuId);
       if (inv) { inv.availableQty = Math.max(0, inv.availableQty - item.qty); inv.reservedQty = (inv.reservedQty || 0) + item.qty; }
     }
-    const newOrder = { id: newOrderId, orderNo, status: 'PENDING' as const, remark: remark || '-', totalWeight, totalQty, customerId: resolvedCustomerId, logisticsChannelId, carrierId, waveId: null, labelPrinted: 'NOT_PRINTED' as const, recipient, salesPlatform, orderType, createdTime: new Date().toISOString() };
+    const newOrder: any = { id: newOrderId, orderNo, status: 'PENDING' as const, remark: remark || '-', totalWeight, totalQty, customerId: resolvedCustomerId, logisticsChannelId, carrierId, waveId: null, labelPrinted: 'NOT_PRINTED' as const, recipient, salesPlatform, orderType, createdTime: new Date().toISOString(), warehouseId: effectiveWhId };
     db.outboundOrders.push(newOrder);
     db.outboundOrderItems.push(...newItems);
     saveDB();
@@ -273,6 +280,8 @@ export function registerOutboundRoutes(router: Router): void {
         const order = await prisma.outboundOrder.findUnique({ where: { id: req.params.id }, include: { items: true } });
         if (!order) return res.status(404).json({ error: 'Order not found' });
         if (isClient(user) && user.customerId && order.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+        if (!assertWarehouseScope(user, order.warehouseId)) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+        if (isClient(user) && updateData.status && updateData.status !== order.status) return res.status(403).json({ error: 'Forbidden. Client cannot change order status.' });
         if (order.status === 'SHIPPED' && updateData.items) return res.status(400).json({ error: '已出库订单无法修改商品列表' });
 
         const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
@@ -325,6 +334,8 @@ export function registerOutboundRoutes(router: Router): void {
     if (index === -1) return res.status(404).json({ error: 'Order not found' });
     const currentOrder = db.outboundOrders[index];
     if (isClient(user) && user.customerId && currentOrder.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
+    if (!assertWarehouseScope(user, (currentOrder as any).warehouseId)) return res.status(403).json({ error: 'Forbidden. Warehouse access denied.' });
+    if (isClient(user) && updateData.status && updateData.status !== currentOrder.status) return res.status(403).json({ error: 'Forbidden. Client cannot change order status.' });
     if (currentOrder.status === 'SHIPPED' && updateData.items) return res.status(400).json({ error: '已出库订单无法修改商品列表' });
 
     const updatedOrder = { ...currentOrder, ...updateData, id: currentOrder.id, orderNo: currentOrder.orderNo };
@@ -504,7 +515,7 @@ export function registerOutboundRoutes(router: Router): void {
     if (isClient(user) && user.customerId && ord.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
     if (ord.status === 'SHIPPED') return res.status(400).json({ error: '订单已是出库状态' });
     const reservations = db.outboundOrderItems.filter(item => item.orderId === ord.id);
-    for (const item of reservations) { const inv = db.inventory.find(i => i.skuId === item.skuId); if (inv) { inv.reservedQty = Math.max(0, (inv.reservedQty || 0) - item.qty); } }
+    for (const item of reservations) { const inv = db.inventory.find(i => i.skuId === item.skuId) as any; if (inv) { inv.reservedQty = Math.max(0, (inv.reservedQty || 0) - item.qty); inv.onHand = Math.max(0, (inv.onHand || 0) - item.qty); } }
     ord.status = 'SHIPPED';
     saveDB();
     res.json({ status: 'success', message: '出库确认成功，库存已扣减', order: ord });
@@ -611,11 +622,12 @@ export function registerOutboundRoutes(router: Router): void {
     res.json(db.importHistory || []);
   });
 
-  router.post('/outbound-orders/import', requireAuth, async (req: any, res) => {
+  router.post('/outbound-orders/import', requireApiKeyOrAuth, async (req: any, res) => {
     const user = req.user;
     const { rows } = req.body;
     const effectiveWhId = resolveWarehouseId(req.user, 'wh_default');
     if (!rows || !Array.isArray(rows) || rows.length === 0) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'No rows provided.' } });
+    if (!assertWarehouseScope(user, effectiveWhId)) return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Forbidden. Warehouse access denied.' } });
 
     const errors: Array<{ row: number; message: string }> = [];
     const successRows: Array<{ orderNo: string; orderId: string; skuCount: number }> = [];
@@ -651,11 +663,11 @@ export function registerOutboundRoutes(router: Router): void {
           }
           if (hasStockIssue) continue;
 
-          const newOrderId = 'ord_imp_' + Date.now();
+          const newOrderId = 'ord_imp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
           const totalQty = (order as any).items.reduce((sum: number, i: any) => sum + i.qty, 0);
 
           await prisma.$transaction(async (tx) => {
-            const outboundOrder = await tx.outboundOrder.create({ data: { id: newOrderId, orderNo, status: 'PENDING', customerId, logisticsChannelId: channel.id, carrierId: carrier.id, recipient: `${(order as any).recipientName}, ${(order as any).address}`, totalQty, totalWeight: parseFloat((totalQty * 1.2).toFixed(2)), remark: `Bulk import: ${(order as any).logisticsChannel}`, salesPlatform: 'Bulk Import', orderType: '单品单件', createdTime: new Date() } });
+            const outboundOrder = await tx.outboundOrder.create({ data: { id: newOrderId, orderNo, status: 'PENDING', customerId, logisticsChannelId: channel.id, carrierId: carrier.id, recipient: `${(order as any).recipientName}, ${(order as any).address}`, totalQty, totalWeight: parseFloat((totalQty * 1.2).toFixed(2)), remark: `Bulk import: ${(order as any).logisticsChannel}`, salesPlatform: 'Bulk Import', orderType: '单品单件', createdTime: new Date(), warehouseId: effectiveWhId } });
             for (const item of (order as any).items) {
               const sku = await tx.sKU.findFirst({ where: { code: item.skuCode } });
               if (!sku) continue;
@@ -681,9 +693,9 @@ export function registerOutboundRoutes(router: Router): void {
         let hasStockIssue = false;
         for (const item of o.items) { const sku = db.skus.find(s => s.code === item.skuCode); if (!sku) { errors.push({ row: 0, message: `Order ${orderNo}: SKU '${item.skuCode}' not found` }); hasStockIssue = true; } }
         if (hasStockIssue) continue;
-        const newOrderId = 'ord_imp_' + Date.now();
+        const newOrderId = 'ord_imp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
         const totalQty = o.items.reduce((sum: number, i: any) => sum + i.qty, 0);
-        db.outboundOrders.push({ id: newOrderId, orderNo, status: 'PENDING' as const, customerId, logisticsChannelId: channel.id, carrierId: carrier.id, recipient: `${o.recipientName}, ${o.address}`, totalQty, totalWeight: parseFloat((totalQty * 1.2).toFixed(2)), remark: `Bulk import: ${o.logisticsChannel}`, salesPlatform: 'Bulk Import', orderType: '单品单件', waveId: null, labelPrinted: 'NOT_PRINTED' as const, createdTime: new Date().toISOString() });
+        db.outboundOrders.push({ id: newOrderId, orderNo, status: 'PENDING' as const, customerId, logisticsChannelId: channel.id, carrierId: carrier.id, recipient: `${o.recipientName}, ${o.address}`, totalQty, totalWeight: parseFloat((totalQty * 1.2).toFixed(2)), remark: `Bulk import: ${o.logisticsChannel}`, salesPlatform: 'Bulk Import', orderType: '单品单件', waveId: null, labelPrinted: 'NOT_PRINTED' as const, createdTime: new Date().toISOString(), warehouseId: effectiveWhId } as any);
         for (const item of o.items) {
           const sku = db.skus.find(s => s.code === item.skuCode);
           if (!sku) continue;

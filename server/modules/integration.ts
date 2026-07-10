@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
-import { requireAuth, requireRole } from '../middleware';
+import { requireAuth, requireRole, isClientUser, isWarehouseUser, assertCustomerScope, assertWarehouseScope } from '../middleware';
 import { carrierAdapter, storeAdapter, storageAdapter } from '../adapters';
 
 export function registerIntegrationRoutes(router: Router): void {
@@ -58,10 +58,14 @@ export function registerIntegrationRoutes(router: Router): void {
   });
 
   router.delete('/api-keys/:id', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const existing = await prisma.apiKey.findUnique({ where: { id: req.params.id } });
+        if (!existing) return res.status(404).json({ error: 'API key not found' });
+        if (isClientUser(user) && existing.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
         await prisma.apiKey.delete({ where: { id: req.params.id } });
         return res.json({ status: 'deleted' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
@@ -120,10 +124,14 @@ export function registerIntegrationRoutes(router: Router): void {
   });
 
   router.delete('/webhooks/:id', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const existing = await prisma.webhookEndpoint.findUnique({ where: { id: req.params.id } });
+        if (!existing) return res.status(404).json({ error: 'Webhook not found' });
+        if (isClientUser(user) && existing.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
         await prisma.webhookEndpoint.delete({ where: { id: req.params.id } });
         return res.json({ status: 'deleted' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }
@@ -200,10 +208,14 @@ export function registerIntegrationRoutes(router: Router): void {
   });
 
   router.delete('/store-connections/:id', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
       try {
+        const existing = await prisma.storeConnection.findUnique({ where: { id: req.params.id } });
+        if (!existing) return res.status(404).json({ error: 'Store connection not found' });
+        if (isClientUser(user) && existing.customerId !== user.customerId) return res.status(403).json({ error: 'Forbidden. Access denied.' });
         await prisma.storeConnection.delete({ where: { id: req.params.id } });
         return res.json({ status: 'deleted' });
       } catch (err: any) { return res.status(400).json({ error: err.message }); }

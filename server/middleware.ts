@@ -3,6 +3,8 @@ import rateLimit from 'express-rate-limit';
 import compression from 'compression';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { getPrisma, checkDbConnection } from './prisma';
 
 const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'NiceC-WMS-Secret-Token-Key-2026!');
 if (!JWT_SECRET) {
@@ -28,6 +30,59 @@ export function requireAuth(req: any, res: any, next: any) {
   }
   req.user = user;
   next();
+}
+
+export async function requireApiKeyOrAuth(req: any, res: any, next: any) {
+  const authUser = getCurrentUser(req);
+  if (authUser) {
+    req.user = authUser;
+    return next();
+  }
+
+  const rawKey = req.headers['x-api-key'];
+  const apiKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Unauthorized. Missing bearer token or X-API-Key.' });
+  }
+
+  const hasDb = await checkDbConnection();
+  if (!hasDb) {
+    return res.status(401).json({ error: 'Unauthorized. API key validation unavailable.' });
+  }
+
+  const prisma = getPrisma();
+
+  try {
+    const keyPrefix = String(apiKey).substring(0, 8);
+    const candidates = await prisma.apiKey.findMany({
+      where: { keyPrefix, status: 'ACTIVE' }
+    });
+
+    for (const candidate of candidates) {
+      const ok = await bcrypt.compare(String(apiKey), candidate.keyHash);
+      if (!ok) continue;
+
+      await prisma.apiKey.update({
+        where: { id: candidate.id },
+        data: { lastUsedAt: new Date() }
+      });
+
+      req.user = {
+        id: `api_key_${candidate.id}`,
+        username: candidate.name || 'api-key',
+        role: 'CLIENT',
+        customerId: candidate.customerId,
+        apiKeyId: candidate.id
+      };
+
+      return next();
+    }
+
+    return res.status(401).json({ error: 'Unauthorized. Invalid API key.' });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'Unauthorized. API key validation failed.' });
+  }
 }
 
 export function requireRole(...allowedRoles: string[]) {

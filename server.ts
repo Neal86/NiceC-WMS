@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { getPrisma, checkDbConnection } from './server/prisma';
-import { generalRateLimit, authRateLimit, corsMiddleware, requestIdMiddleware, errorHandler, notFoundHandler, helmetConfig, compressionMiddleware, requireAuth, getCurrentUser } from './server/middleware';
+import { generalRateLimit, authRateLimit, corsMiddleware, requestIdMiddleware, errorHandler, notFoundHandler, helmetConfig, compressionMiddleware, requireAuth, requireRole, getCurrentUser } from './server/middleware';
 import { initWebSocket } from './server/websocket';
 import { registerAuthRoutes } from './server/modules/auth';
 import { registerAdminRoutes } from './server/modules/admin';
@@ -51,7 +51,7 @@ async function startServer() {
     res.json({ status: healthy ? 'ok' : 'error', prisma: prismaAvailable, db: healthy });
   });
 
-  app.get('/api/operation-logs', requireAuth, async (req: any, res) => {
+  app.get('/api/operation-logs', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();

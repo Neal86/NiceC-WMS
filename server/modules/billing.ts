@@ -17,7 +17,7 @@ import { Router } from 'express';
 import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
 import { getWebSocket } from '../websocket';
-import { requireAuth, requireRole } from '../middleware';
+import { requireAuth, requireRole, isClientUser, isWarehouseUser, assertCustomerScope, assertWarehouseScope } from '../middleware';
 
 // ──────────────────────────────────────────────
 // Types
@@ -519,6 +519,7 @@ export async function recalculateInvoice(invoiceId: string): Promise<{ success: 
 
 export function registerBillingRoutes(router: Router): void {
   router.get('/billing-rules', requireAuth, async (req: any, res) => {
+    const user = req.user;
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();

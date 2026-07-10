@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getPrisma, checkDbConnection } from '../prisma';
 import { getDB, saveDB } from '../db';
-import { requireAuth, requireCustomerAccess } from '../middleware';
+import { requireAuth, requireRole, isClientUser, assertCustomerScope, isWarehouseUser, assertWarehouseScope } from '../middleware';
 
 export function registerProductRoutes(router: Router): void {
   router.get('/products', requireAuth, async (req: any, res) => {
@@ -95,7 +95,7 @@ export function registerProductRoutes(router: Router): void {
     res.json({ status: 'success', product: db.products[index] });
   });
 
-  router.delete('/products/:id', requireAuth, async (req: any, res) => {
+  router.delete('/products/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
@@ -136,7 +136,7 @@ export function registerSkuRoutes(router: Router): void {
     res.json(skus);
   });
 
-  router.get('/skus/:id', requireAuth, requireCustomerAccess, async (req: any, res) => {
+  router.get('/skus/:id', requireAuth, async (req: any, res) => {
     const user = req.user;
     const isClient = (user.role || '').toUpperCase() === 'CLIENT';
     const hasDb = await checkDbConnection();
@@ -207,7 +207,7 @@ export function registerSkuRoutes(router: Router): void {
     res.json({ status: 'success', sku: db.skus[index] });
   });
 
-  router.delete('/skus/:id', requireAuth, async (req: any, res) => {
+  router.delete('/skus/:id', requireAuth, requireRole('ADMIN', 'SUPER_ADMIN'), async (req: any, res) => {
     const hasDb = await checkDbConnection();
     if (hasDb) {
       const prisma = getPrisma();
